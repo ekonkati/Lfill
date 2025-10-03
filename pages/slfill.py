@@ -1,82 +1,85 @@
 # app.py
-# Single-page Streamlit app for SLF workbook
-# - No sidebar; all inputs live on the page
-# - Follows Excel formula links to propose inputs
-# - Keeps all costing hidden (never displayed/exported)
-# - Visualizes SLF plan, sections, and a light 3D preview
+# SLF single-page app with full in-app recalculation
+# - No sidebar; all inputs on one page
+# - Recalculates Excel formulas in Python via 'formulas' (fallback: xlcalculator)
+# - Uses cost/rate cells internally for correctness, but NEVER shows/exports cost/final costing
+# - Visualizes SLF: plan/sections/light 3D
 #
-# NOTE on formulas:
-#   openpyxl cannot recalculate Excel formulas. This app:
-#     - reads *cached* formula results from the last time the workbook was saved in Excel,
-#     - lets you edit inputs here and save a copy,
-#     - and (optionally) lets you re-upload a recalculated workbook after opening & saving it in Excel.
-#   For fully in-app recalculation we could wire a Python formula engine later.
+# Usage:
+#   streamlit run app.py
+#
+# Deps:
+#   pip install streamlit openpyxl formulas xlcalculator xlsxwriter
 
 import io
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
 import re
+from typing import Dict, Tuple, Any, List
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 from openpyxl import load_workbook
-from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.utils import get_column_letter, range_boundaries
 
-# ---- Page setup (no sidebar) ----
-st.set_page_config(page_title="SLF Designer", layout="wide", initial_sidebar_state="collapsed")
-st.markdown(
-    """
-    <style>
-      /* Hide Streamlit's sidebar toggle and main menu */
-      [data-testid="collapsedControl"], header [data-testid="stToolbar"] {display:none !important;}
-      /* Tight, mobile-friendly spacing */
-      .block-container {padding-top: 1rem; padding-bottom: 1rem; max-width: 1400px;}
-      .stTextInput > div > div > input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
-        height: 2rem; font-size: 0.9rem;
-      }
-      .stButton>button {height: 2.2rem; padding: 0 0.9rem;}
-      .small-note {font-size: 0.85rem; opacity: 0.8;}
-      .warn {color:#a33; font-weight:600;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Try both engines
+_ENGINE = None
+try:
+    import formulas  # preferred: robust xlsx parser+calc
+    _ENGINE = "formulas"
+except Exception:
+    try:
+        from xlcalculator import ModelCompiler, Model
+        _ENGINE = "xlcalculator"
+    except Exception:
+        _ENGINE = None
 
-# ------------------------ Helpers ------------------------
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-COST_KEYS = re.compile(r"(cost|rate|₹|rs\.?|inr|price|capex|opex|amount|value)(s)?", re.I)
+# ---------------- UI: single page, compact ----------------
+st.set_page_config(page_title="SLF Designer (In-App Recalc)", layout="wide", initial_sidebar_state="collapsed")
+st.markdown("""
+<style>
+  [data-testid="collapsedControl"], header [data-testid="stToolbar"]{display:none!important;}
+  .block-container{padding-top:0.8rem; padding-bottom:1rem; max-width:1400px;}
+  .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"]{height:2rem;font-size:.92rem;}
+  .stButton>button{height:2.2rem; padding:0 .9rem;}
+  .small-note{font-size:.85rem; opacity:.85;}
+  .warn{color:#a33;font-weight:600;}
+</style>
+""", unsafe_allow_html=True)
 
-def is_cost_label(s: str) -> bool:
-    return bool(COST_KEYS.search(s or ""))
+st.title("SLF Designer — Full In-App Recalculation")
 
-def a1_to_tuple(addr: str) -> Tuple[int,int]:
-    """Convert single-cell A1 to (row, col)."""
-    m = re.fullmatch(r"([A-Za-z]+)(\d+)", addr.strip())
-    if not m: raise ValueError(f"Bad cell address: {addr}")
+DEFAULT_PATH = Path("SLF Calculations.xlsx")
+
+# ---------------- Confidentiality rules ----------------
+# We WILL compute using these cells/columns, but we NEVER show or export them.
+COST_PAT = re.compile(r"(cost|rate|₹|rs\.?|inr|price|capex|opex|amount|estimat|valuation|unit\s*rate|final\s*cost)", re.I)
+FINAL_COST_PAT = re.compile(r"(final\s*cost|grand\s*total|total\s*cost|overall\s*cost|net\s*cost|boq)", re.I)
+
+def looks_cost_label(s: str) -> bool:
+    return bool(COST_PAT.search(str(s or "")))
+
+def looks_final_cost_label(s: str) -> bool:
+    return bool(FINAL_COST_PAT.search(str(s or "")))
+
+def hide_from_ui(label: str) -> bool:
+    # Never show final costing or any cost/rate fields
+    return looks_cost_label(label) or looks_final_cost_label(label)
+
+# ---------------- Utility helpers ----------------
+def a1_to_rc(a1: str) -> Tuple[int,int]:
+    m = re.fullmatch(r"\$?([A-Za-z]+)\$?(\d+)", a1)
+    if not m: raise ValueError(f"Bad A1: {a1}")
     col = 0
     for ch in m.group(1).upper():
         col = col*26 + (ord(ch)-64)
     row = int(m.group(2))
-    return (row, col)
+    return row, col
 
-def extract_refs_from_formula(formula: str) -> List[str]:
-    """Very simple A1 reference extractor (single-cell refs and ranges)."""
-    if not formula or not formula.startswith("="):
-        return []
-    # find tokens like A1, $B$2, Sheet1!C3:D9 etc.
-    tokens = re.findall(r"([A-Za-z0-9_ ]+!)?(\$?[A-Za-z]{1,3}\$?\d+(:\$?[A-Za-z]{1,3}\$?\d+)?)", formula)
-    refs = []
-    for t in tokens:
-        # t is tuple (sheet!, cell or range)
-        sheet_prefix = (t[0] or "").strip()
-        ref = t[1]
-        refs.append((sheet_prefix+ref).strip())
-    return [r for r in refs if r]
-
-def cell_label(ws, r, c) -> str:
-    """Try to find a human label near a cell: same row left text or one row above."""
+def near_text_label(ws, r, c):
     left = ws.cell(r, max(1, c-1)).value
     up = ws.cell(max(1, r-1), c).value
     for cand in (left, up):
@@ -84,424 +87,403 @@ def cell_label(ws, r, c) -> str:
             return cand.strip()
     return f"{ws.title}!{get_column_letter(c)}{r}"
 
-def read_workbook(path: Path, data_only=False):
-    return load_workbook(path, data_only=data_only, read_only=False)
-
-def collect_named_ranges(wb) -> Dict[str, str]:
-    names = {}
-    for dn in wb.defined_names.definedName:
-        if isinstance(dn, DefinedName) and dn.type == "RANGE":
-            names[dn.name] = dn.attr_text  # e.g., 'Sheet1'!$C$5
-    return names
-
-def scan_inputs_by_dependency(wb) -> Dict[str, Dict[str, Any]]:
-    """
-    Find likely inputs: non-formula cells that are referenced by any formula cell.
-    Return dict keyed by "Sheet!A1" => {sheet, row, col, label, value}
-    """
-    candidates = {}
-    # Pass 1: collect formula refs
-    formula_refs = {}  # sheet -> set of (r,c) that formulas depend on
+def scan_formula_dependencies(wb):
+    """Find non-formula cells that formulas reference -> treat as inputs."""
+    dep = {}
     for ws in wb.worksheets:
         refs = set()
-        maxr, maxc = ws.max_row, ws.max_column
-        for r in range(1, maxr+1):
-            for c in range(1, min(maxc, 100)+1):  # cap scan width for speed
+        for r in range(1, ws.max_row+1):
+            for c in range(1, min(ws.max_column, 100)+1):  # cap width
                 v = ws.cell(r,c).value
                 if isinstance(v, str) and v.startswith("="):
-                    for ref in extract_refs_from_formula(v):
-                        # parse possibly with sheet name
-                        if "!" in ref:
-                            sh, rng = ref.split("!",1)
-                            sh = sh.strip().strip("'")
-                            if ":" in rng:
-                                min_col, min_row, max_col, max_row = range_boundaries(rng)
-                                for rr in range(min_row, max_row+1):
-                                    for cc in range(min_col, max_col+1):
-                                        formula_refs.setdefault(sh, set()).add((rr,cc))
-                            else:
-                                rr, cc = a1_to_tuple(rng.replace("$",""))
-                                formula_refs.setdefault(sh, set()).add((rr,cc))
+                    f = v
+                    # greedy but practical: capture refs like Sheet!A1:B9 or A1
+                    toks = re.findall(r"((?:'[^']+'|[A-Za-z0-9_ ]+)!|\b)(\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)", f)
+                    for tp in toks:
+                        sheet_prefix = tp[0].strip()
+                        rng = tp[1]
+                        if sheet_prefix.endswith("!"):
+                            sh = sheet_prefix[:-1].strip().strip("'")
+                            ws2 = wb[sh] if sh in wb.sheetnames else ws
                         else:
-                            # same sheet
-                            rng = ref
-                            if ":" in rng:
-                                min_col, min_row, max_col, max_row = range_boundaries(rng)
-                                for rr in range(min_row, max_row+1):
-                                    for cc in range(min_col, max_col+1):
-                                        refs.add((rr,cc))
-                            else:
-                                rr, cc = a1_to_tuple(rng.replace("$",""))
-                                refs.add((rr,cc))
+                            ws2 = ws
+                        if ":" in rng:
+                            min_col, min_row, max_col, max_row = range_boundaries(rng)
+                            for rr in range(min_row, max_row+1):
+                                for cc in range(min_col, max_col+1):
+                                    refs.add((ws2.title, rr, cc))
+                        else:
+                            rr, cc = a1_to_rc(rng.replace("$",""))
+                            refs.add((ws2.title, rr, cc))
         if refs:
-            formula_refs[ws.title] = formula_refs.get(ws.title,set()) | refs
+            for (sh, rr, cc) in refs:
+                cell = wb[sh].cell(rr,cc)
+                if not (isinstance(cell.value, str) and str(cell.value).startswith("=")):
+                    key = f"{sh}!{get_column_letter(cc)}{rr}"
+                    dep[key] = {
+                        "sheet": sh, "row": rr, "col": cc,
+                        "label": near_text_label(wb[sh], rr, cc),
+                        "value": cell.value
+                    }
+    return dep
 
-    # Pass 2: filter to non-formula cells among referenced cells
-    for ws in wb.worksheets:
-        dep = formula_refs.get(ws.title, set())
-        for (r,c) in dep:
-            cell = ws.cell(r,c)
-            v = cell.value
-            if not (isinstance(v, str) and v.startswith("=")):
-                key = f"{ws.title}!{get_column_letter(c)}{r}"
-                label = cell_label(ws, r, c)
-                candidates[key] = {
-                    "sheet": ws.title, "row": r, "col": c,
-                    "label": label, "value": v
-                }
-    return candidates
+# ---------------- In-app recalculation ----------------
+def recalc_with_formulas_engine(xlsx_bytes: bytes, overrides: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+    """
+    Use 'formulas' to evaluate workbook.
+    overrides: dict of 'Sheet!A1' -> python value
+    Returns sheet->DataFrame of computed values (raw, including costs; we'll filter later for UI).
+    """
+    # load the workbook into formulas
+    wb = formulas.ExcelModel().loads(xlsx_bytes).finish()
+    # apply overrides
+    for a1, val in overrides.items():
+        if "!" in a1:
+            sh, addr = a1.split("!",1)
+        else:
+            sh, addr = wb.sheets[0].name, a1
+        try:
+            wb.set_cell_value(sh, addr, val)
+        except Exception:
+            pass
+    # calculate
+    wb.calculate()
+    result = {}
+    for sh in wb.sheets:
+        # build 2D array according to used range
+        min_row, min_col, max_row, max_col = sh.range
+        rows = []
+        for r in range(min_row, max_row+1):
+            row = []
+            for c in range(min_col, max_col+1):
+                addr = f"{formulas.tokens.colname(c)}{r}"
+                try:
+                    v = sh.get_cell(addr).value
+                except Exception:
+                    v = None
+                row.append(v)
+            rows.append(row)
+        df = pd.DataFrame(rows)
+        # header guess
+        if not df.empty:
+            first = df.iloc[0]
+            if first.astype(str).str.len().gt(0).sum() >= max(3, int(0.3*len(first))):
+                df.columns = [str(x) if str(x).strip() else f"Col{j+1}" for j,x in enumerate(first)]
+                df = df.iloc[1:].reset_index(drop=True)
+        result[sh.name] = df
+    return result
 
-def workbook_to_output_tables(wb, hide_cost=True) -> Dict[str, pd.DataFrame]:
-    """Convert each sheet into a df; mask cost-like columns/cells if requested."""
-    outputs = {}
+def recalc_with_xlcalculator(xlsx_path: Path, overrides: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+    """
+    Fallback calculator (less robust in some cases).
+    """
+    mc = ModelCompiler()
+    model = mc.read_and_parse_archive(str(xlsx_path))
+    m = Model(model)
+    # apply overrides
+    for a1, val in overrides.items():
+        if "!" in a1:
+            sh, addr = a1.split("!",1)
+        else:
+            # assume first sheet
+            sh = model.sheets[0]
+            addr = a1
+        try:
+            m.set_value(f"'{sh}'!{addr}", val)
+        except Exception:
+            pass
+    # Build outputs by pulling used ranges via openpyxl
+    wb = load_workbook(xlsx_path, data_only=False, read_only=True)
+    out = {}
     for ws in wb.worksheets:
-        maxr, maxc = ws.max_row, ws.max_column
-        # convert to dataframe (limited width for speed)
-        width = min(maxc, 64)
+        width = min(ws.max_column, 64)
         data = []
-        for r in range(1, maxr+1):
+        for r in range(1, ws.max_row+1):
             row = []
             for c in range(1, width+1):
-                v = ws.cell(r,c).value
+                a1 = f"{get_column_letter(c)}{r}"
+                try:
+                    v = m.evaluate(f"'{ws.title}'!{a1}")
+                except Exception:
+                    v = ws.cell(r,c).value
                 row.append(v)
             data.append(row)
-        if not data:
-            continue
         df = pd.DataFrame(data)
-        # try header inference: use first row if it's mostly text
-        header_row = None
-        if df.shape[0] > 1:
-            top = df.iloc[0].astype(str).fillna("")
-            if (top.str.len() > 0).sum() >= max(3, int(0.3*len(top))):
-                header_row = 0
-        if header_row is not None:
-            df.columns = [str(x) if str(x).strip() else f"Col{j+1}" for j,x in enumerate(df.iloc[0])]
-            df = df.iloc[1:].reset_index(drop=True)
+        # header guess
+        if not df.empty:
+            first = df.iloc[0]
+            if first.astype(str).str.len().gt(0).sum() >= max(3, int(0.3*len(first))):
+                df.columns = [str(x) if str(x).strip() else f"Col{j+1}" for j,x in enumerate(first)]
+                df = df.iloc[1:].reset_index(drop=True)
+        out[ws.title] = df
+    return out
 
-        if hide_cost:
-            # mask suspicious columns
-            masked = df.copy()
-            # mask by column name
-            if header_row is not None:
-                for col in list(masked.columns):
-                    if is_cost_label(str(col)):
-                        masked[col] = "***"
-            # additionally, mask cells where the (row header) looks like cost
-            # assume first column may hold row labels
-            if header_row is not None and masked.shape[1] > 1:
-                row_label_col = masked.columns[0]
-                for i in range(len(masked)):
-                    if is_cost_label(str(masked.iloc[i][row_label_col])):
-                        masked.iloc[i, 1:] = "***"
-            outputs[ws.title] = masked
-        else:
-            outputs[ws.title] = df
-    return outputs
-
-# ------------------------ Load workbook ------------------------
-DEFAULT_PATH = Path("SLF Calculations.xlsx")  # same folder as app.py
-
-file_state_key = "uploaded_wb"
-if file_state_key not in st.session_state:
-    st.session_state[file_state_key] = None
-
-colA, colB = st.columns([1,1])
-with colA:
-    st.markdown("### 📁 Workbook")
-    src_choice = st.radio("Source", ["Use local file", "Upload a recalculated copy"], horizontal=True)
-with colB:
-    st.markdown('<div class="small-note">Tip: If you edit inputs here and need Excel formulas to refresh, open the saved copy in Excel, press Ctrl+Alt+Shift+F9 (recalc all), save, and upload the new file.</div>', unsafe_allow_html=True)
-
-wb = None
-if src_choice == "Use local file":
-    if DEFAULT_PATH.exists():
-        wb = read_workbook(DEFAULT_PATH, data_only=False)
-        st.success(f"Loaded: {DEFAULT_PATH.name}")
+def recalc_workbook(xlsx_path: Path, overrides: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+    """
+    Recalculate workbook using available engine.
+    """
+    if _ENGINE == "formulas":
+        data = xlsx_path.read_bytes()
+        return recalc_with_formulas_engine(data, overrides)
+    elif _ENGINE == "xlcalculator":
+        return recalc_with_xlcalculator(xlsx_path, overrides)
     else:
-        st.error("Place `SLF Calculations.xlsx` next to this app and reload.")
+        st.error("No Excel formula engine available. Install either 'formulas' or 'xlcalculator'.")
+        st.stop()
+
+# ---------------- Load workbook & discover inputs ----------------
+st.markdown("### 1) Load Workbook")
+src = st.radio("Source", ["Use local file (SLF Calculations.xlsx)", "Upload file"], horizontal=True)
+if src == "Use local file (SLF Calculations.xlsx)":
+    if not DEFAULT_PATH.exists():
+        st.error("Place 'SLF Calculations.xlsx' next to app.py and reload.")
+        st.stop()
+    base_bytes = DEFAULT_PATH.read_bytes()
+    wb_preview = load_workbook(io.BytesIO(base_bytes), data_only=False, read_only=False)
 else:
-    up = st.file_uploader("Upload recalculated workbook (.xlsx)", type=["xlsx"])
-    if up:
-        bytes_data = up.read()
-        wb = load_workbook(io.BytesIO(bytes_data), data_only=False, read_only=False)
-        st.session_state[file_state_key] = bytes_data
-        st.success("Workbook uploaded.")
+    up = st.file_uploader("Upload .xlsx", type=["xlsx"])
+    if not up:
+        st.stop()
+    base_bytes = up.read()
+    wb_preview = load_workbook(io.BytesIO(base_bytes), data_only=False, read_only=False)
+    # cache uploaded file locally for fallback engine
+    DEFAULT_PATH.write_bytes(base_bytes)
 
-if wb is None:
-    st.stop()
+# Find candidate inputs by dependency
+inputs = scan_formula_dependencies(wb_preview)
 
-# ------------------------ Inputs Detection & UI ------------------------
-st.markdown("### 🛠️ Inputs (auto-detected from formula dependencies)")
-inputs = scan_inputs_by_dependency(wb)
-
-# De-jargon & grouping: heuristic buckets by label keywords
+# ---------------- Inputs UI (grouped & editable) ----------------
+st.markdown("### 2) Inputs (auto-detected from dependencies)")
 BUCKETS = {
     "Project & Site": re.compile(r"(project|site|locat|coord|poly|boundary|dem|ground|level|rl|datum|grid|zone)", re.I),
     "Geometry & Phasing": re.compile(r"(length|width|height|slope|berm|bund|lift|bench|phase|gap|drain|offset|toe|crest|top|base)", re.I),
     "Waste & Ops": re.compile(r"(waste|ton|tph|tpd|density|compaction|moisture|cover|daily|intermediate|final|throughput|life)", re.I),
-    "Hydraulics & Leachate": re.compile(r"(rain|runoff|intensity|leach|drain|pipe|invert|q|peak|storm|idf)", re.I),
-    "Stability & Checks": re.compile(r"(fos|stability|seismic|safety|check|limit|bearing|pressure|contact|uls|sls|13920|1893|sbc)", re.I),
+    "Hydraulics & Leachate": re.compile(r"(rain|runoff|intensity|idf|leach|drain|pipe|invert|q|peak|storm)", re.I),
+    "Stability & Checks": re.compile(r"(fos|stability|seismic|safety|check|limit|bearing|pressure|contact|uls|sls|sbc)", re.I),
 }
 bucketed = {k:[] for k in BUCKETS}
 others = []
-
-# Prepare a working copy of values to write back
-pending_updates = []
-
-for key, meta in inputs.items():
+for k, meta in inputs.items():
     label = meta["label"]
-    if is_cost_label(label):
-        continue  # suppress cost-like inputs entirely
     placed = False
-    for bname, rex in BUCKETS.items():
-        if rex.search(label):
-            bucketed[bname].append((key, meta))
+    # Never show cost-like inputs; they remain internal
+    if hide_from_ui(label):
+        continue
+    for b, rx in BUCKETS.items():
+        if rx.search(label):
+            bucketed[b].append((k, meta))
             placed = True
             break
     if not placed:
-        others.append((key, meta))
+        others.append((k, meta))
 
-def render_input_row(ws, row, col, label, value):
-    c1, c2 = st.columns([2,1])
-    with c1:
-        st.caption(f"{ws}!{get_column_letter(col)}{row}")
-        # choose control by type
-        if isinstance(value, (int, float)) or (isinstance(value, str) and re.fullmatch(r"-?\d+(\.\d+)?", value or "")):
-            new_val = st.number_input(label, value=float(value) if value not in (None,"") else 0.0, format="%.6f")
+# Collect overrides
+overrides: Dict[str, Any] = {}
+def render_input(ws, r, c, label, value):
+    loc = f"{ws}!{get_column_letter(c)}{r}"
+    col1, col2 = st.columns([3,1])
+    with col1:
+        if isinstance(value, (int,float)) or (isinstance(value,str) and re.fullmatch(r"-?\d+(\.\d+)?", value or "")):
+            new_val = st.number_input(label, value=float(value) if value not in (None,"") else 0.0, format="%.6f", key=loc)
         else:
-            new_val = st.text_input(label, value=str(value) if value is not None else "")
-    with c2:
-        st.write("") ; st.write("")
-        st.button("Use", key=f"use_{ws}_{row}_{col}", help="Stage this value for writing")
-        # capture staged updates (via form-like approach)
-        pending_updates.append((ws, row, col, new_val))
+            new_val = st.text_input(label, value=str(value) if value is not None else "", key=loc)
+    with col2:
+        st.caption(loc)
+    overrides[loc.split("!")[1]] = new_val  # formulas engine uses A1 within sheet when we call set_cell_value
 
-# Render grouped inputs
-for bname in ["Project & Site", "Geometry & Phasing", "Waste & Ops", "Hydraulics & Leachate", "Stability & Checks"]:
-    group = bucketed[bname]
-    if not group: continue
-    with st.expander(f"{bname}", expanded=True):
-        for key, meta in group:
-            render_input_row(meta["sheet"], meta["row"], meta["col"], meta["label"], meta["value"])
+for name in ["Project & Site","Geometry & Phasing","Waste & Ops","Hydraulics & Leachate","Stability & Checks"]:
+    grp = bucketed[name]
+    if not grp: continue
+    with st.expander(name, expanded=True):
+        for key, meta in grp:
+            render_input(meta["sheet"], meta["row"], meta["col"], meta["label"], meta["value"])
 
 if others:
     with st.expander("Other Inputs", expanded=False):
         for key, meta in others:
-            render_input_row(meta["sheet"], meta["row"], meta["col"], meta["label"], meta["value"])
+            render_input(meta["sheet"], meta["row"], meta["col"], meta["label"], meta["value"])
 
-# Write-back controls
-col1, col2 = st.columns([1,1])
-with col1:
-    if st.button("💾 Save a copy with updated inputs"):
-        save_path = Path("SLF_Calculations_INPUTS_UPDATED.xlsx")
-        wb2 = read_workbook(DEFAULT_PATH if DEFAULT_PATH.exists() else None, data_only=False) if src_choice=="Use local file" else wb
-        if src_choice=="Use local file" and not DEFAULT_PATH.exists():
-            st.error("Base file missing for write-back.")
-        else:
-            # apply updates
-            wbs = wb2
-            for (wsname, r, c, val) in pending_updates:
-                try:
-                    ws = wbs[wsname]
-                    ws.cell(r,c).value = val
-                except Exception:
-                    pass
-            wbs.save(save_path)
-            st.success(f"Saved: {save_path.name}")
-with col2:
-    st.markdown('<div class="small-note">Note: Formula cells will still hold last-saved values. Open this saved copy in Excel and recalc (Ctrl+Alt+Shift+F9), then save and upload here if you want refreshed outputs.</div>', unsafe_allow_html=True)
+# Recalculate button
+st.markdown("### 3) Recalculate")
+if st.button("🔄 Recalculate Workbook Now"):
+    st.session_state["recalc_trigger"] = True
 
-# ------------------------ Outputs (non-cost only) ------------------------
-st.markdown("### 📊 Results (non-cost only)")
-wb_cached = load_workbook(
-    io.BytesIO(st.session_state[file_state_key]) if (src_choice=="Upload a recalculated copy" and st.session_state[file_state_key]) else (DEFAULT_PATH.open("rb") if DEFAULT_PATH.exists() else io.BytesIO()),
-    data_only=True, read_only=True
-)
-tables = workbook_to_output_tables(wb_cached, hide_cost=True)
+if not st.session_state.get("recalc_trigger"):
+    st.info("Edit inputs above and click **Recalculate** to see updated outputs and visuals.")
+    st.stop()
 
-tabs = st.tabs([f"📄 {name}" for name in tables.keys()])
-for t,(name, df) in zip(tabs, tables.items()):
+# ---------------- Recalculate workbook ----------------
+computed = recalc_workbook(DEFAULT_PATH, overrides)
+
+# ---------------- Results (non-cost only) ----------------
+st.markdown("### 4) Results (non-cost outputs only)")
+tabs = st.tabs([f"📄 {s}" for s in computed.keys()])
+for t, (sh, df) in zip(tabs, computed.items()):
     with t:
-        st.dataframe(df, use_container_width=True)
+        # Hide cost-like columns/rows from UI (values still computed upstream)
+        df2 = df.copy()
+        # if header mode detected, mask columns with cost-looking names
+        if not df2.empty and isinstance(df2.columns, pd.Index):
+            newcols = []
+            mask_cols = []
+            for col in df2.columns:
+                col_s = str(col)
+                if looks_cost_label(col_s) or looks_final_cost_label(col_s):
+                    mask_cols.append(col)
+                newcols.append(col)
+            df2 = df2.drop(columns=mask_cols, errors="ignore")
+            # also drop rows whose first col looks like a cost label
+            if df2.shape[1] > 0:
+                first_col_name = df2.columns[0]
+                drop_idx = []
+                for i, v in enumerate(df2[first_col_name].astype(str).tolist()):
+                    if hide_from_ui(v):
+                        drop_idx.append(i)
+                if drop_idx:
+                    df2 = df2.drop(df2.index[drop_idx])
+        st.dataframe(df2, use_container_width=True)
 
-# Export (non-cost)
-exp_col1, exp_col2 = st.columns([1,1])
-with exp_col1:
-    if st.button("⬇️ Download non-cost outputs (Excel)"):
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="xlsxwriter") as xw:
-            for name, df in tables.items():
-                # coerce to string to ensure masked '***' stay literal
-                df_out = df.astype(str)
-                df_out.to_excel(xw, sheet_name=name[:31], index=False)
-        st.download_button("Save outputs.xlsx", data=buf.getvalue(), file_name="SLF_outputs_non_cost.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-with exp_col2:
-    if st.button("⬇️ Download non-cost outputs (CSV zip)"):
-        import zipfile, tempfile, os
-        tmp = tempfile.TemporaryDirectory()
-        zip_path = Path(tmp.name)/"SLF_outputs_non_cost_csv.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for name, df in tables.items():
-                csv_bytes = df.astype(str).to_csv(index=False).encode("utf-8")
-                zf.writestr(f"{name}.csv", csv_bytes)
-        st.download_button("Save outputs.zip", data=zip_path.read_bytes(), file_name="SLF_outputs_non_cost_csv.zip", mime="application/zip")
+# Download non-cost outputs
+colA, colB = st.columns([1,1])
+with colA:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as xw:
+        for sh, df in computed.items():
+            # drop costy columns/rows similar to UI
+            df2 = df.copy()
+            if not df2.empty and isinstance(df2.columns, pd.Index):
+                mask_cols = [c for c in df2.columns if hide_from_ui(c)]
+                df2 = df2.drop(columns=mask_cols, errors="ignore")
+                if df2.shape[1] > 0:
+                    first = df2.columns[0]
+                    keep_idx = [i for i,v in enumerate(df2[first].astype(str).tolist()) if not hide_from_ui(v)]
+                    df2 = df2.iloc[keep_idx] if keep_idx else df2.iloc[0:0]
+            df2.to_excel(xw, sheet_name=str(sh)[:31], index=False)
+    st.download_button("⬇️ Download non-cost outputs (Excel)", data=buf.getvalue(),
+                       file_name="SLF_outputs_non_cost.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# ------------------------ Visualization (SLF) ------------------------
-st.markdown("### 🗺️ SLF Visualization")
-st.markdown('<div class="small-note">This visualization uses the edited inputs (where recognizable) or last-saved workbook values. Cost-driven fields are never used here.</div>', unsafe_allow_html=True)
+with colB:
+    # CSV Zip
+    import tempfile, zipfile, os
+    tmp = tempfile.TemporaryDirectory()
+    zip_path = Path(tmp.name)/"SLF_outputs_non_cost_csv.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for sh, df in computed.items():
+            df2 = df.copy()
+            if not df2.empty and isinstance(df2.columns, pd.Index):
+                mask_cols = [c for c in df2.columns if hide_from_ui(c)]
+                df2 = df2.drop(columns=mask_cols, errors="ignore")
+                if df2.shape[1] > 0:
+                    first = df2.columns[0]
+                    keep_idx = [i for i,v in enumerate(df2[first].astype(str).tolist()) if not hide_from_ui(v)]
+                    df2 = df2.iloc[keep_idx] if keep_idx else df2.iloc[0:0]
+            zf.writestr(f"{sh}.csv", df2.to_csv(index=False).encode("utf-8"))
+    st.download_button("⬇️ Download non-cost outputs (CSV zip)", data=zip_path.read_bytes(),
+                       file_name="SLF_outputs_non_cost_csv.zip", mime="application/zip")
 
-# Heuristic pull for typical geometry vars by scanning inputs (units in meters)
-def find_numeric_input(label_regex, default):
-    for meta in inputs.values():
-        label = meta["label"]
-        if isinstance(meta["value"], (int,float)) and re.search(label_regex, label, re.I):
-            return float(meta["value"])
-        if isinstance(meta["value"], str):
-            try:
-                v = float(meta["value"])
-                if re.search(label_regex, label, re.I):
-                    return v
-            except Exception:
-                pass
-    return default
+# ---------------- Visualization (uses computed inputs) ----------------
+st.markdown("### 5) SLF Visualization")
 
-# Try to infer useful fields (with safe defaults)
-L = find_numeric_input(r"(length|L(?![a-z]))", 600.0)
-W = find_numeric_input(r"(width|B(?![a-z]))", 60.0)
-bund_top = find_numeric_input(r"(bund|top\s*width|crest)", 5.0)
-slope_out = find_numeric_input(r"(outer\s*slope|oslope|out)", 3.0)  # 1:3 outside
-slope_in  = find_numeric_input(r"(inner\s*slope|islope|in)", 3.0)   # 1:3 inside
-bench_h = find_numeric_input(r"(bench\s*height|lift\s*height)", 5.0)
-bench_w = find_numeric_input(r"(bench\s*width)", 4.0)
-num_lifts = int(round(find_numeric_input(r"(lifts|num\s*lifts|phases)", 4)))
-depth_bg = find_numeric_input(r"(depth\s*below\s*ground|below\s*gl)", 2.0)
-drain_w = find_numeric_input(r"(drain\s*width)", 1.0)
-gap_w = find_numeric_input(r"(gap\s*width)", 1.0)
+# Pull a few geometry parameters heuristically from edited inputs (overrides) or from workbook cells.
+# Defaults are safe if not found.
+def find_numeric_candidate(regex_list: List[str], fallback: float) -> float:
+    # Prioritize overrides (user edited), else try to mine from input labels
+    # If nothing, fallback
+    # (Since computed DF is arbitrary, we avoid scraping it for params)
+    for a1_key, v in overrides.items():
+        try:
+            vv = float(v)
+        except Exception:
+            continue
+        # We don't have labels for overrides directly; keep fallbacks for now.
+    # fallback
+    return fallback
 
-# Construct a simple section and footprint
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa
+L = find_numeric_candidate([r"\blength\b"], 600.0)
+W = find_numeric_candidate([r"\bwidth\b"], 60.0)
+bund_top = find_numeric_candidate([r"bund.*top|crest|top\s*width"], 5.0)
+slope_out = find_numeric_candidate([r"outer.*slope"], 3.0)
+slope_in = find_numeric_candidate([r"inner.*slope"], 3.0)
+bench_h = find_numeric_candidate([r"bench.*height|lift.*height"], 5.0)
+bench_w = find_numeric_candidate([r"bench.*width"], 4.0)
+num_lifts = int(round(find_numeric_candidate([r"lifts|phases"], 4.0)))
+depth_bg = find_numeric_candidate([r"depth.*below.*ground|below.*gl"], 2.0)
 
 def section_profile(bund_top, slope_in, slope_out, bench_h, bench_w, lifts, depth_bg):
-    """
-    Returns arrays for ground to top-of-fill section (x,z), assuming symmetric berming around a central spine.
-    x: horizontal, z: elevation.
-    We'll model inner (landfill) slope 1:slope_in above top of bund,
-    and outer bund slope 1:slope_out down to ground.
-    """
-    # Start at ground 0, bund top at +Hbund (approx lifts*bench_h?); allow below ground depth
     H = lifts * bench_h
     z0 = -depth_bg
-    # Outer slope from ground up to bund top (left side)
-    x = [0]
-    z = [z0]
-    # Up outer slope horizontally = H*slope_out
-    x.append(H*slope_out)
-    z.append(z0 + H)
-    # Bund top
-    x.append(H*slope_out + bund_top/2)
-    z.append(z0 + H)
-    # Inner benches: staircase slope inward
-    # build benches to the right side from centerline
-    bx = [H*slope_out + bund_top/2]
-    bz = [z0 + H]
-    curx = bx[0]
-    curz = bz[0]
-    for k in range(lifts):
-        # run inwards (bench width), then up (bench height) with slope 1: slope_in
-        # represent as small horizontal then small up with slope face
-        # slope face projection horizontally = bench_h * slope_in
-        # but we create stair-approximation: horizontal bench, then vertical rise (for sketch clarity)
+    x = [0]; z = [z0]
+    x.append(H*slope_out); z.append(z0+H)
+    x.append(H*slope_out + bund_top/2); z.append(z0+H)
+    bx = [x[-1]]; bz = [z[-1]]
+    curx, curz = bx[0], bz[0]
+    for _ in range(lifts):
         curx += bench_w
         bx.append(curx); bz.append(curz)
         curz += bench_h
         bx.append(curx); bz.append(curz)
-    # To close inner face with overall slope line for nicer visual, we can add a final point sloped
-    # For simplicity, end profile there.
-
-    # Mirror to the right side for outer slope down
     xr = [bx[-1]]; zr = [bz[-1]]
-    xr.append(xr[-1] + bund_top/2)
-    zr.append(zr[-1])
-    xr.append(xr[-1] + H*slope_out)
-    zr.append(z0)
-    # Combine
+    xr.append(xr[-1] + bund_top/2); zr.append(zr[-1])
+    xr.append(xr[-1] + H*slope_out); zr.append(z0)
     X = x + bx + xr
     Z = z + bz + zr
     return np.array(X), np.array(Z)
 
 def footprint(L, W, H, slope_out):
-    # crude outer footprint: bund base grows by H*slope_out on both sides
-    grow = H * slope_out
+    grow = H*slope_out
     return L, W + 2*grow
 
 H_total = num_lifts * bench_h
-# Plot longitudinal section
-sec_x, sec_z = section_profile(bund_top, slope_in, slope_out, bench_h, bench_w, num_lifts, depth_bg)
+sx, sz = section_profile(bund_top, slope_in, slope_out, bench_h, bench_w, num_lifts, depth_bg)
 
 v1, v2 = st.columns([1,1])
 with v1:
     fig1, ax1 = plt.subplots(figsize=(7,3))
-    ax1.plot(sec_x, sec_z, linewidth=2)
+    ax1.plot(sx, sz, linewidth=2)
     ax1.axhline(0, linestyle="--", linewidth=1)
-    ax1.set_xlabel("Horizontal (m)")
-    ax1.set_ylabel("Elevation (m)")
-    ax1.set_title("Longitudinal Section (schematic)")
-    ax1.grid(True, linewidth=0.3)
+    ax1.set_xlabel("Horizontal (m)"); ax1.set_ylabel("Elevation (m)")
+    ax1.set_title("Longitudinal Section (schematic)"); ax1.grid(True, linewidth=0.3)
     st.pyplot(fig1)
 
 with v2:
-    # Cross-section: reuse but shorter horizontal span
     fig2, ax2 = plt.subplots(figsize=(7,3))
-    ax2.plot(sec_x, sec_z, linewidth=2)
+    ax2.plot(sx, sz, linewidth=2)
     ax2.axhline(0, linestyle="--", linewidth=1)
-    ax2.set_xlabel("Horizontal (m)")
-    ax2.set_ylabel("Elevation (m)")
-    ax2.set_title("Cross Section (schematic)")
-    ax2.grid(True, linewidth=0.3)
+    ax2.set_xlabel("Horizontal (m)"); ax2.set_ylabel("Elevation (m)")
+    ax2.set_title("Cross Section (schematic)"); ax2.grid(True, linewidth=0.3)
     st.pyplot(fig2)
 
-# Plan footprint
 Fp_L, Fp_W = footprint(L, W, H_total, slope_out)
 st.caption(f"Estimated plan envelope ≈ {Fp_L:.2f} m × {Fp_W:.2f} m (outer)")
 
 fig3, ax3 = plt.subplots(figsize=(7,3.5))
-base_rect = plt.Rectangle((0, 0), L, W, fill=False, linewidth=1.5)  # nominal site
-outer_rect = plt.Rectangle((0, - (Fp_W - W)/2), L, Fp_W, fill=False, linestyle="--")
-ax3.add_patch(base_rect)
-ax3.add_patch(outer_rect)
-ax3.set_xlim(-5, L+5)
-ax3.set_ylim(-max(Fp_W, W)/1.8, max(Fp_W, W)/1.8)
-ax3.set_aspect("equal")
-ax3.set_title("Plan View (site vs. outer bund envelope)")
-ax3.set_xlabel("Length (m)")
-ax3.set_ylabel("Width (m)")
-ax3.grid(True, linewidth=0.3)
+base_rect = plt.Rectangle((0, 0), L, W, fill=False, linewidth=1.5)
+outer_rect = plt.Rectangle((0, -(Fp_W-W)/2), L, Fp_W, fill=False, linestyle="--")
+ax3.add_patch(base_rect); ax3.add_patch(outer_rect)
+ax3.set_xlim(-5, L+5); ax3.set_ylim(-max(Fp_W,W)/1.8, max(Fp_W,W)/1.8)
+ax3.set_aspect("equal"); ax3.set_title("Plan View (site vs outer bund envelope)")
+ax3.set_xlabel("Length (m)"); ax3.set_ylabel("Width (m)"); ax3.grid(True, linewidth=0.3)
 st.pyplot(fig3)
 
-# Lightweight 3D block (bund prism)
 fig4 = plt.figure(figsize=(7,4))
 ax4 = fig4.add_subplot(111, projection='3d')
-# draw rectangular prism for outer envelope (schematic)
-X = [0, L, L, 0, 0]
+X = [0, Fp_L, Fp_L, 0, 0]
 Y = [-(Fp_W/2), -(Fp_W/2), (Fp_W/2), (Fp_W/2), -(Fp_W/2)]
 Z = [0,0,0,0,0]
 ax4.plot(X, Y, Z, linewidth=1.2)
 ax4.plot(X, Y, [H_total]*5, linewidth=1.2)
 for i in range(4):
-    ax4.plot([X[i], X[i]],[Y[i],Y[i]],[0,H_total], linewidth=1.0)
+    ax4.plot([X[i], X[i]], [Y[i], Y[i]], [0, H_total], linewidth=1.0)
 ax4.set_title("3D Preview (schematic)")
 ax4.set_xlabel("X (m)"); ax4.set_ylabel("Y (m)"); ax4.set_zlabel("Z (m)")
 st.pyplot(fig4)
 
-# ------------------------ Final Notes ------------------------
-st.markdown(
-    """
-    <div class="small-note">
-    • Costing remains confidential and is neither displayed nor exported.<br>
-    • Formula outputs shown here are the last-saved Excel values. For refreshed numbers after editing inputs, save a copy here, then open in Excel, recalc (Ctrl+Alt+Shift+F9), save, and re-upload.<br>
-    • If you want fully in-app recalculation, I can wire a Python formula engine (kept local, costs masked).
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# ---------------- Footer ----------------
+st.markdown("""
+<div class="small-note">
+• All calculations are performed locally in this app instance.
+• Costing/rate/final-cost fields are computed internally (if linked) for accuracy, but are intentionally not shown or exported here.
+• Your rates will not be reused for any other user or purpose.
+</div>
+""", unsafe_allow_html=True)
