@@ -1,44 +1,34 @@
 # app.py
-# SLF single-page app with full in-app recalculation
-# - No sidebar; all inputs on one page
-# - Recalculates Excel formulas in Python via 'formulas' (fallback: xlcalculator)
-# - Uses cost/rate cells internally for correctness, but NEVER shows/exports cost/final costing
-# - Visualizes SLF: plan/sections/light 3D
+# -------------------------------------------------------------------
+# Independent SLF (Sanitary Landfill) Designer & Visualizer
+# - No dependency on any Excel workbook
+# - All computations in pure Python
+# - Single page, no sidebar, compact/mobile friendly
+# - Visualizations: plan, longitudinal section, cross-section, simple 3D
+# - Hydrology (rational method), leachate estimate, drain sizing (Manning),
+#   capacity/life, bearing/contact check, quick slope stability (infinite slope),
+#   settlement/void ratio option (simplified).
+# - Exports only the final, non-cost results to Excel (multi-sheet)
 #
-# Usage:
-#   streamlit run app.py
-#
-# Deps:
-#   pip install streamlit openpyxl formulas xlcalculator xlsxwriter
+# Notes:
+# * This is a professional-grade scaffold: formulas are explicit and easy to
+#   tune to your local standards, manuals (CPCB, CPHEEO), and project specifics.
+# * If you need code-level parity to a previous workbook, paste the exact
+#   algebra into the calc_* functions marked below.
+# -------------------------------------------------------------------
 
 import io
-from pathlib import Path
-import re
-from typing import Dict, Tuple, Any, List
-
-import streamlit as st
-import pandas as pd
+from dataclasses import dataclass, asdict
+from typing import Dict, Tuple, List
+import math
 import numpy as np
-from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter, range_boundaries
-
-# Try both engines
-_ENGINE = None
-try:
-    import formulas  # preferred: robust xlsx parser+calc
-    _ENGINE = "formulas"
-except Exception:
-    try:
-        from xlcalculator import ModelCompiler, Model
-        _ENGINE = "xlcalculator"
-    except Exception:
-        _ENGINE = None
-
+import pandas as pd
+import streamlit as st
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-# ---------------- UI: single page, compact ----------------
-st.set_page_config(page_title="SLF Designer (In-App Recalc)", layout="wide", initial_sidebar_state="collapsed")
+# ---------------- UI: single page, compact, no sidebar ----------------
+st.set_page_config(page_title="Independent SLF Designer", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
   [data-testid="collapsedControl"], header [data-testid="stToolbar"]{display:none!important;}
@@ -50,440 +40,403 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("SLF Designer — Full In-App Recalculation")
+st.title("Independent SLF Designer & Visualizer")
 
-DEFAULT_PATH = Path("SLF Calculations.xlsx")
+# ---------------- Data models ----------------
+@dataclass
+class ProjectInfo:
+    name: str = "My SLF Project"
+    location: str = "City, State"
+    benchmark_rl: float = 0.0  # reference RL for sections
 
-# ---------------- Confidentiality rules ----------------
-# We WILL compute using these cells/columns, but we NEVER show or export them.
-COST_PAT = re.compile(r"(cost|rate|₹|rs\.?|inr|price|capex|opex|amount|estimat|valuation|unit\s*rate|final\s*cost)", re.I)
-FINAL_COST_PAT = re.compile(r"(final\s*cost|grand\s*total|total\s*cost|overall\s*cost|net\s*cost|boq)", re.I)
+@dataclass
+class GeometryInputs:
+    length_m: float = 600.0             # site length
+    width_m: float = 60.0               # site width (inner flat region)
+    depth_below_gl_m: float = 2.0       # excavation below ground level
+    bund_top_width_m: float = 5.0       # crest/top width
+    outer_slope_h: float = 3.0          # 1 : outer_slope_h
+    inner_slope_h: float = 3.0          # 1 : inner_slope_h (above bund on landfill side)
+    lift_height_m: float = 5.0
+    bench_width_m: float = 4.0
+    num_lifts: int = 4
+    edge_gap_m: float = 1.0             # gap between bund toe and drain/path
+    drain_width_m: float = 1.0
 
-def looks_cost_label(s: str) -> bool:
-    return bool(COST_PAT.search(str(s or "")))
+@dataclass
+class WasteOps:
+    tpd: float = 800.0                  # incoming waste (t/day)
+    bulk_density_tpm3: float = 0.85     # placed/compacted density
+    daily_cover_pct: float = 10.0       # % of waste volume
+    intermediate_cover_pct: float = 5.0 # additional % at phase ends
+    final_cover_thk_m: float = 1.0      # final cover thickness (top area)
+    settlement_pct: float = 15.0        # final settlement (void collapse) %
 
-def looks_final_cost_label(s: str) -> bool:
-    return bool(FINAL_COST_PAT.search(str(s or "")))
+@dataclass
+class Hydrology:
+    runoff_coeff: float = 0.8           # C for rational method
+    design_intensity_mmphr: float = 60  # i (mm/hr)
+    drainage_slope: float = 0.5/100.0   # S for Manning (m/m)
+    manning_n: float = 0.013            # roughness (e.g., lined trapezoidal/rectangular)
+    leachate_fraction_runoff: float = 0.25  # fraction of runoff that becomes leachate over waste body
 
-def hide_from_ui(label: str) -> bool:
-    # Never show final costing or any cost/rate fields
-    return looks_cost_label(label) or looks_final_cost_label(label)
+@dataclass
+class Geotech:
+    phi_deg: float = 30.0               # waste shear friction angle
+    cohesion_kpa: float = 5.0           # small effective cohesion
+    unit_weight_kNpm3: float = 9.0      # γ (kN/m3) waste mass (saturated ~9-12)
+    seismic_kh: float = 0.05            # pseudo-static horizontal coeff (opt)
+    foundation_sbc_kPa: float = 200.0   # allowable bearing capacity
+    foundation_footprint_factor: float = 0.9  # actual bearing area ratio due to local effects
 
-# ---------------- Utility helpers ----------------
-def a1_to_rc(a1: str) -> Tuple[int,int]:
-    m = re.fullmatch(r"\$?([A-Za-z]+)\$?(\d+)", a1)
-    if not m: raise ValueError(f"Bad A1: {a1}")
-    col = 0
-    for ch in m.group(1).upper():
-        col = col*26 + (ord(ch)-64)
-    row = int(m.group(2))
-    return row, col
+# ---------------- Calculation helpers ----------------
+def calc_stack_height(geom: GeometryInputs) -> float:
+    return geom.num_lifts * geom.lift_height_m
 
-def near_text_label(ws, r, c):
-    left = ws.cell(r, max(1, c-1)).value
-    up = ws.cell(max(1, r-1), c).value
-    for cand in (left, up):
-        if isinstance(cand, str) and cand.strip():
-            return cand.strip()
-    return f"{ws.title}!{get_column_letter(c)}{r}"
+def calc_outer_footprint(geom: GeometryInputs) -> Tuple[float, float]:
+    """Approximate outer plan envelope: base width grows by H * outer slope on both sides."""
+    H = calc_stack_height(geom)
+    grow = H * geom.outer_slope_h
+    return (geom.length_m, geom.width_m + 2*grow)
 
-def scan_formula_dependencies(wb):
-    """Find non-formula cells that formulas reference -> treat as inputs."""
-    dep = {}
-    for ws in wb.worksheets:
-        refs = set()
-        for r in range(1, ws.max_row+1):
-            for c in range(1, min(ws.max_column, 100)+1):  # cap width
-                v = ws.cell(r,c).value
-                if isinstance(v, str) and v.startswith("="):
-                    f = v
-                    # greedy but practical: capture refs like Sheet!A1:B9 or A1
-                    toks = re.findall(r"((?:'[^']+'|[A-Za-z0-9_ ]+)!|\b)(\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)", f)
-                    for tp in toks:
-                        sheet_prefix = tp[0].strip()
-                        rng = tp[1]
-                        if sheet_prefix.endswith("!"):
-                            sh = sheet_prefix[:-1].strip().strip("'")
-                            ws2 = wb[sh] if sh in wb.sheetnames else ws
-                        else:
-                            ws2 = ws
-                        if ":" in rng:
-                            min_col, min_row, max_col, max_row = range_boundaries(rng)
-                            for rr in range(min_row, max_row+1):
-                                for cc in range(min_col, max_col+1):
-                                    refs.add((ws2.title, rr, cc))
-                        else:
-                            rr, cc = a1_to_rc(rng.replace("$",""))
-                            refs.add((ws2.title, rr, cc))
-        if refs:
-            for (sh, rr, cc) in refs:
-                cell = wb[sh].cell(rr,cc)
-                if not (isinstance(cell.value, str) and str(cell.value).startswith("=")):
-                    key = f"{sh}!{get_column_letter(cc)}{rr}"
-                    dep[key] = {
-                        "sheet": sh, "row": rr, "col": cc,
-                        "label": near_text_label(wb[sh], rr, cc),
-                        "value": cell.value
-                    }
-    return dep
-
-# ---------------- In-app recalculation ----------------
-def recalc_with_formulas_engine(xlsx_bytes: bytes, overrides: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+def polygonal_volume_from_stair(geom: GeometryInputs) -> float:
     """
-    Use 'formulas' to evaluate workbook.
-    overrides: dict of 'Sheet!A1' -> python value
-    Returns sheet->DataFrame of computed values (raw, including costs; we'll filter later for UI).
+    Very practical stacked-berm volume inside bund.
+    Simplified as: inner 'terrace' steps. We approximate the interior volume
+    as sum of lift layers: each lift adds area = (inner width + k*bench_width)*length*lift_height slope allowance.
+    Here we model inner advance by bench width per lift and apply inner slope to the face.
     """
-    # load the workbook into formulas
-    wb = formulas.ExcelModel().loads(xlsx_bytes).finish()
-    # apply overrides
-    for a1, val in overrides.items():
-        if "!" in a1:
-            sh, addr = a1.split("!",1)
-        else:
-            sh, addr = wb.sheets[0].name, a1
-        try:
-            wb.set_cell_value(sh, addr, val)
-        except Exception:
-            pass
-    # calculate
-    wb.calculate()
-    result = {}
-    for sh in wb.sheets:
-        # build 2D array according to used range
-        min_row, min_col, max_row, max_col = sh.range
-        rows = []
-        for r in range(min_row, max_row+1):
-            row = []
-            for c in range(min_col, max_col+1):
-                addr = f"{formulas.tokens.colname(c)}{r}"
-                try:
-                    v = sh.get_cell(addr).value
-                except Exception:
-                    v = None
-                row.append(v)
-            rows.append(row)
-        df = pd.DataFrame(rows)
-        # header guess
-        if not df.empty:
-            first = df.iloc[0]
-            if first.astype(str).str.len().gt(0).sum() >= max(3, int(0.3*len(first))):
-                df.columns = [str(x) if str(x).strip() else f"Col{j+1}" for j,x in enumerate(first)]
-                df = df.iloc[1:].reset_index(drop=True)
-        result[sh.name] = df
-    return result
+    L = geom.length_m
+    H = calc_stack_height(geom)
+    # Inner width grows by bench width per lift; start from flat inner width
+    w0 = geom.width_m
+    area = 0.0
+    curw = w0
+    for k in range(geom.num_lifts):
+        # trapezoid band due to inner slope face approx: horizontal advance = lift_height * inner_slope_h
+        dx = geom.lift_height_m * geom.inner_slope_h
+        # effective width for this lift (avg): curw + 0.5*(bench + slope advance)
+        eff_w = curw + 0.5*(geom.bench_width_m + dx)
+        area += eff_w * geom.lift_height_m
+        curw += geom.bench_width_m
+    vol = area * L  # m3
+    # deduct excavation below GL (negative volume) -> actually adds capacity; we include it positively:
+    vol += geom.length_m * geom.width_m * geom.depth_below_gl_m
+    return max(vol, 0.0)
 
-def recalc_with_xlcalculator(xlsx_path: Path, overrides: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+def calc_waste_capacity_m3(geom: GeometryInputs, waste: WasteOps) -> Dict[str, float]:
+    """Compute gross and net capacity incl. covers and settlement."""
+    gross_geo_vol = polygonal_volume_from_stair(geom)
+    # Covers as volume fractions:
+    daily_cover = waste.daily_cover_pct/100.0
+    inter_cover = waste.intermediate_cover_pct/100.0
+    # Assume final cover is a thickness over top envelope area
+    _, Wouter = calc_outer_footprint(geom)
+    top_area = geom.length_m * Wouter   # outer top plan (conservative upper bound)
+    final_cover_vol = top_area * waste.final_cover_thk_m
+    # Settlement reclaim (void collapse increases space for waste; treat as capacity boost)
+    settlement_gain = gross_geo_vol * (waste.settlement_pct/100.0)
+    net_for_waste = gross_geo_vol * (1.0 - daily_cover - inter_cover) - final_cover_vol + settlement_gain
+    net_for_waste = max(net_for_waste, 0.0)
+    return {
+        "gross_geom_volume_m3": gross_geo_vol,
+        "final_cover_volume_m3": final_cover_vol,
+        "net_waste_volume_m3": net_for_waste
+    }
+
+def calc_life_years(geom: GeometryInputs, waste: WasteOps) -> Dict[str, float]:
+    cap = calc_waste_capacity_m3(geom, waste)
+    net_m3 = cap["net_waste_volume_m3"]
+    # Convert TPD to m3/day using bulk density:
+    m3_per_day = waste.tpd / max(waste.bulk_density_tpm3, 1e-6)
+    days = net_m3 / max(m3_per_day, 1e-6)
+    years = days/365.0
+    return {"life_days": days, "life_years": years, **cap}
+
+def rational_Q(C: float, i_mmphr: float, A_m2: float) -> float:
+    """Rational method: Q = C i A; i in m/s, A in m2 => Q m3/s."""
+    i_mps = (i_mmphr/1000.0) / 3600.0
+    return C * i_mps * A_m2
+
+def leachate_estimate(Q_runoff_m3s: float, frac: float) -> float:
+    """Very simplified leachate flow as a fraction of runoff over waste body."""
+    return Q_runoff_m3s * frac
+
+def manning_rectangular_Q(n: float, A: float, R: float, S: float) -> float:
+    """Manning: Q = (1/n) A R^(2/3) S^(1/2)"""
+    return (1.0/max(n,1e-6)) * A * (R**(2.0/3.0)) * (math.sqrt(max(S,1e-8)))
+
+def drain_capacity_rectangular(b: float, h: float, n: float, S: float) -> float:
+    """Rectangular open channel approx."""
+    A = b * h
+    P = 2*h + b
+    R = A / max(P, 1e-6)
+    return manning_rectangular_Q(n, A, R, S)
+
+def bearing_check(geom: GeometryInputs, ge: Geotech, waste: WasteOps) -> Dict[str, float]:
+    """Uniform pressure estimate from total weight vs footprint & SBC check."""
+    H = calc_stack_height(geom)
+    # Outer footprint area (base bearing area) times empirical factor
+    L, Wouter = calc_outer_footprint(geom)
+    area = L * Wouter * ge.foundation_footprint_factor
+    # Approximate total waste volume * unit weight + final cover:
+    cap = calc_waste_capacity_m3(geom, waste)
+    waste_vol = cap["net_waste_volume_m3"]
+    # Convert unit weight (kN/m3) -> kPa when divided by area (m2) with height integration
+    # Take resultant load as γ * volume (kN)
+    total_load_kN = ge.unit_weight_kNpm3 * waste_vol
+    q_kPa = (total_load_kN / max(area,1e-6))  # kN/m2 = kPa
+    fos_bearing = ge.foundation_sbc_kPa / max(q_kPa, 1e-6)
+    return {"bearing_pressure_kPa": q_kPa, "SBC_kPa": ge.foundation_sbc_kPa, "FOS_bearing": fos_bearing, "footprint_area_m2": area}
+
+def infinite_slope_fos(phi_deg: float, c_kPa: float, gamma_kNpm3: float, z_m: float, beta_deg: float, kh: float=0.0) -> float:
     """
-    Fallback calculator (less robust in some cases).
+    Infinite slope FOS (drained, simple):
+    FOS = (c/(γ z sinβ cosβ) + tanφ / tanβ) * (1 - kh * (cosβ / sinβ))
+    This is a simplistic check; refine with your preferred method as needed.
     """
-    mc = ModelCompiler()
-    model = mc.read_and_parse_archive(str(xlsx_path))
-    m = Model(model)
-    # apply overrides
-    for a1, val in overrides.items():
-        if "!" in a1:
-            sh, addr = a1.split("!",1)
-        else:
-            # assume first sheet
-            sh = model.sheets[0]
-            addr = a1
-        try:
-            m.set_value(f"'{sh}'!{addr}", val)
-        except Exception:
-            pass
-    # Build outputs by pulling used ranges via openpyxl
-    wb = load_workbook(xlsx_path, data_only=False, read_only=True)
-    out = {}
-    for ws in wb.worksheets:
-        width = min(ws.max_column, 64)
-        data = []
-        for r in range(1, ws.max_row+1):
-            row = []
-            for c in range(1, width+1):
-                a1 = f"{get_column_letter(c)}{r}"
-                try:
-                    v = m.evaluate(f"'{ws.title}'!{a1}")
-                except Exception:
-                    v = ws.cell(r,c).value
-                row.append(v)
-            data.append(row)
-        df = pd.DataFrame(data)
-        # header guess
-        if not df.empty:
-            first = df.iloc[0]
-            if first.astype(str).str.len().gt(0).sum() >= max(3, int(0.3*len(first))):
-                df.columns = [str(x) if str(x).strip() else f"Col{j+1}" for j,x in enumerate(first)]
-                df = df.iloc[1:].reset_index(drop=True)
-        out[ws.title] = df
-    return out
+    beta = math.radians(max(min(beta_deg, 89.0), 1.0))
+    phi = math.radians(phi_deg)
+    term1 = (c_kPa / max(gamma_kNpm3 * z_m * math.sin(beta) * math.cos(beta), 1e-6))
+    term2 = (math.tan(phi) / max(math.tan(beta), 1e-6))
+    seismic_mod = max(1.0 - kh * (math.cos(beta)/max(math.sin(beta),1e-6)), 0.1)
+    return (term1 + term2) * seismic_mod
 
-def recalc_workbook(xlsx_path: Path, overrides: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+def stability_checks(geom: GeometryInputs, gt: Geotech) -> Dict[str, float]:
     """
-    Recalculate workbook using available engine.
+    Quick stability proxies:
+    - Outer slope β_o = arctan(1/outer_slope_h)
+    - Inner slope β_i = arctan(1/inner_slope_h)
+    Evaluate FoS at representative depths.
     """
-    if _ENGINE == "formulas":
-        data = xlsx_path.read_bytes()
-        return recalc_with_formulas_engine(data, overrides)
-    elif _ENGINE == "xlcalculator":
-        return recalc_with_xlcalculator(xlsx_path, overrides)
-    else:
-        st.error("No Excel formula engine available. Install either 'formulas' or 'xlcalculator'.")
-        st.stop()
+    z = max(calc_stack_height(geom)/2.0, 1.0)  # representative slice depth
+    beta_o = math.degrees(math.atan(1.0/max(geom.outer_slope_h,1e-6)))
+    beta_i = math.degrees(math.atan(1.0/max(geom.inner_slope_h,1e-6)))
+    fos_outer = infinite_slope_fos(gt.phi_deg, gt.cohesion_kpa, gt.unit_weight_kNpm3, z, beta_o, gt.seismic_kh)
+    fos_inner = infinite_slope_fos(gt.phi_deg, gt.cohesion_kpa, gt.unit_weight_kNpm3, z, beta_i, gt.seismic_kh)
+    return {"beta_outer_deg": beta_o, "beta_inner_deg": beta_i, "FOS_outer": fos_outer, "FOS_inner": fos_inner, "rep_depth_m": z}
 
-# ---------------- Load workbook & discover inputs ----------------
-st.markdown("### 1) Load Workbook")
-src = st.radio("Source", ["Use local file (SLF Calculations.xlsx)", "Upload file"], horizontal=True)
-if src == "Use local file (SLF Calculations.xlsx)":
-    if not DEFAULT_PATH.exists():
-        st.error("Place 'SLF Calculations.xlsx' next to app.py and reload.")
-        st.stop()
-    base_bytes = DEFAULT_PATH.read_bytes()
-    wb_preview = load_workbook(io.BytesIO(base_bytes), data_only=False, read_only=False)
-else:
-    up = st.file_uploader("Upload .xlsx", type=["xlsx"])
-    if not up:
-        st.stop()
-    base_bytes = up.read()
-    wb_preview = load_workbook(io.BytesIO(base_bytes), data_only=False, read_only=False)
-    # cache uploaded file locally for fallback engine
-    DEFAULT_PATH.write_bytes(base_bytes)
+# ---------------- Inputs ----------------
+with st.expander("1) Project & Site", expanded=True):
+    p = ProjectInfo(
+        name = st.text_input("Project name", "My SLF Project"),
+        location = st.text_input("Location", "City, State"),
+        benchmark_rl = st.number_input("Benchmark RL (m)", value=0.0, format="%.3f"),
+    )
 
-# Find candidate inputs by dependency
-inputs = scan_formula_dependencies(wb_preview)
+with st.expander("2) Geometry & Phasing", expanded=True):
+    g = GeometryInputs(
+        length_m = st.number_input("Site length L (m)", value=600.0, min_value=10.0, step=10.0),
+        width_m = st.number_input("Inner width W (m)", value=60.0, min_value=10.0, step=1.0),
+        depth_below_gl_m = st.number_input("Depth below GL (m)", value=2.0, min_value=0.0, step=0.1, format="%.2f"),
+        bund_top_width_m = st.number_input("Bund crest/top width (m)", value=5.0, min_value=1.0, step=0.5, format="%.2f"),
+        outer_slope_h = st.number_input("Outer slope (1 : H)", value=3.0, min_value=1.0, step=0.5, format="%.2f"),
+        inner_slope_h = st.number_input("Inner slope (1 : H)", value=3.0, min_value=1.0, step=0.5, format="%.2f"),
+        lift_height_m = st.number_input("Lift/bench height (m)", value=5.0, min_value=1.0, step=0.5, format="%.2f"),
+        bench_width_m = st.number_input("Bench width (m)", value=4.0, min_value=1.0, step=0.5, format="%.2f"),
+        num_lifts = st.number_input("Number of lifts", value=4, min_value=1, step=1),
+        edge_gap_m = st.number_input("Edge gap to drain/path (m)", value=1.0, min_value=0.0, step=0.5, format="%.2f"),
+        drain_width_m = st.number_input("Peripheral drain width (m)", value=1.0, min_value=0.5, step=0.5, format="%.2f"),
+    )
 
-# ---------------- Inputs UI (grouped & editable) ----------------
-st.markdown("### 2) Inputs (auto-detected from dependencies)")
-BUCKETS = {
-    "Project & Site": re.compile(r"(project|site|locat|coord|poly|boundary|dem|ground|level|rl|datum|grid|zone)", re.I),
-    "Geometry & Phasing": re.compile(r"(length|width|height|slope|berm|bund|lift|bench|phase|gap|drain|offset|toe|crest|top|base)", re.I),
-    "Waste & Ops": re.compile(r"(waste|ton|tph|tpd|density|compaction|moisture|cover|daily|intermediate|final|throughput|life)", re.I),
-    "Hydraulics & Leachate": re.compile(r"(rain|runoff|intensity|idf|leach|drain|pipe|invert|q|peak|storm)", re.I),
-    "Stability & Checks": re.compile(r"(fos|stability|seismic|safety|check|limit|bearing|pressure|contact|uls|sls|sbc)", re.I),
-}
-bucketed = {k:[] for k in BUCKETS}
-others = []
-for k, meta in inputs.items():
-    label = meta["label"]
-    placed = False
-    # Never show cost-like inputs; they remain internal
-    if hide_from_ui(label):
-        continue
-    for b, rx in BUCKETS.items():
-        if rx.search(label):
-            bucketed[b].append((k, meta))
-            placed = True
-            break
-    if not placed:
-        others.append((k, meta))
+with st.expander("3) Waste & Operations", expanded=True):
+    w = WasteOps(
+        tpd = st.number_input("Waste throughput (TPD)", value=800.0, min_value=10.0, step=10.0),
+        bulk_density_tpm3 = st.number_input("Bulk density (t/m³)", value=0.85, min_value=0.3, step=0.05, format="%.2f"),
+        daily_cover_pct = st.number_input("Daily cover (%)", value=10.0, min_value=0.0, step=1.0, format="%.1f"),
+        intermediate_cover_pct = st.number_input("Intermediate cover (%)", value=5.0, min_value=0.0, step=1.0, format="%.1f"),
+        final_cover_thk_m = st.number_input("Final cover thickness (m)", value=1.0, min_value=0.0, step=0.1, format="%.2f"),
+        settlement_pct = st.number_input("Settlement allowance (%)", value=15.0, min_value=0.0, step=1.0, format="%.1f"),
+    )
 
-# Collect overrides
-overrides: Dict[str, Any] = {}
-def render_input(ws, r, c, label, value):
-    loc = f"{ws}!{get_column_letter(c)}{r}"
-    col1, col2 = st.columns([3,1])
-    with col1:
-        if isinstance(value, (int,float)) or (isinstance(value,str) and re.fullmatch(r"-?\d+(\.\d+)?", value or "")):
-            new_val = st.number_input(label, value=float(value) if value not in (None,"") else 0.0, format="%.6f", key=loc)
-        else:
-            new_val = st.text_input(label, value=str(value) if value is not None else "", key=loc)
-    with col2:
-        st.caption(loc)
-    overrides[loc.split("!")[1]] = new_val  # formulas engine uses A1 within sheet when we call set_cell_value
+with st.expander("4) Hydrology & Leachate", expanded=True):
+    h = Hydrology(
+        runoff_coeff = st.number_input("Runoff coefficient C (0-1)", value=0.8, min_value=0.0, max_value=1.0, step=0.05),
+        design_intensity_mmphr = st.number_input("Design rainfall intensity i (mm/hr)", value=60.0, min_value=1.0, step=1.0),
+        drainage_slope = st.number_input("Drain longitudinal slope S (m/m)", value=0.5/100.0, min_value=0.0001, step=0.0001, format="%.4f"),
+        manning_n = st.number_input("Manning n (lined channel)", value=0.013, min_value=0.010, step=0.001, format="%.3f"),
+        leachate_fraction_runoff = st.number_input("Leachate fraction of runoff", value=0.25, min_value=0.0, max_value=1.0, step=0.05),
+    )
 
-for name in ["Project & Site","Geometry & Phasing","Waste & Ops","Hydraulics & Leachate","Stability & Checks"]:
-    grp = bucketed[name]
-    if not grp: continue
-    with st.expander(name, expanded=True):
-        for key, meta in grp:
-            render_input(meta["sheet"], meta["row"], meta["col"], meta["label"], meta["value"])
+with st.expander("5) Geotechnical / Stability", expanded=True):
+    gt = Geotech(
+        phi_deg = st.number_input("Waste friction angle φ (deg)", value=30.0, min_value=10.0, max_value=45.0, step=1.0),
+        cohesion_kpa = st.number_input("Waste cohesion c (kPa)", value=5.0, min_value=0.0, step=0.5, format="%.1f"),
+        unit_weight_kNpm3 = st.number_input("Unit weight γ (kN/m³)", value=9.0, min_value=6.0, max_value=18.0, step=0.5, format="%.1f"),
+        seismic_kh = st.number_input("Pseudo-static kh", value=0.05, min_value=0.0, max_value=0.25, step=0.01, format="%.2f"),
+        foundation_sbc_kPa = st.number_input("Allowable SBC (kPa)", value=200.0, min_value=50.0, step=10.0),
+        foundation_footprint_factor = st.number_input("Footprint efficiency factor (0-1)", value=0.9, min_value=0.5, max_value=1.0, step=0.05),
+    )
 
-if others:
-    with st.expander("Other Inputs", expanded=False):
-        for key, meta in others:
-            render_input(meta["sheet"], meta["row"], meta["col"], meta["label"], meta["value"])
+# ---------------- Calculations ----------------
+H_total = calc_stack_height(g)
+L_outer, W_outer = calc_outer_footprint(g)
+cap = calc_waste_capacity_m3(g, w)
+life = calc_life_years(g, w)
 
-# Recalculate button
-st.markdown("### 3) Recalculate")
-if st.button("🔄 Recalculate Workbook Now"):
-    st.session_state["recalc_trigger"] = True
+# Hydrology: use outer envelope area for runoff (conservative)
+A_runoff = L_outer * W_outer
+Q_runoff = rational_Q(h.runoff_coeff, h.design_intensity_mmphr, A_runoff)  # m3/s
+Q_leachate = leachate_estimate(Q_runoff, h.leachate_fraction_runoff)
+# Drain capacity per linear meter (rectangular) -> pick drain height = drain width (square-ish)
+drain_h = g.drain_width_m
+Q_drain = drain_capacity_rectangular(g.drain_width_m, drain_h, h.manning_n, h.drainage_slope)
 
-if not st.session_state.get("recalc_trigger"):
-    st.info("Edit inputs above and click **Recalculate** to see updated outputs and visuals.")
-    st.stop()
+# Bearing & Stability checks
+bearing = bearing_check(g, gt, w)
+stab = stability_checks(g, gt)
 
-# ---------------- Recalculate workbook ----------------
-computed = recalc_workbook(DEFAULT_PATH, overrides)
+# ---------------- Results (cards) ----------------
+st.markdown("### 6) Key Results (non-cost)")
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.metric("Total Stack Height H (m)", f"{H_total:.2f}")
+    st.metric("Outer Plan (L×W) m", f"{L_outer:.1f} × {W_outer:.1f}")
+with c2:
+    st.metric("Gross Geom. Volume (m³)", f"{cap['gross_geom_volume_m3']:.0f}")
+    st.metric("Final Cover Vol (m³)", f"{cap['final_cover_volume_m3']:.0f}")
+with c3:
+    st.metric("Net Waste Volume (m³)", f"{cap['net_waste_volume_m3']:.0f}")
+    st.metric("Estimated Life (years)", f"{life['life_years']:.2f}")
+with c4:
+    st.metric("Runoff Q (m³/s)", f"{Q_runoff:.4f}")
+    st.metric("Leachate Q est. (m³/s)", f"{Q_leachate:.4f}")
 
-# ---------------- Results (non-cost only) ----------------
-st.markdown("### 4) Results (non-cost outputs only)")
-tabs = st.tabs([f"📄 {s}" for s in computed.keys()])
-for t, (sh, df) in zip(tabs, computed.items()):
-    with t:
-        # Hide cost-like columns/rows from UI (values still computed upstream)
-        df2 = df.copy()
-        # if header mode detected, mask columns with cost-looking names
-        if not df2.empty and isinstance(df2.columns, pd.Index):
-            newcols = []
-            mask_cols = []
-            for col in df2.columns:
-                col_s = str(col)
-                if looks_cost_label(col_s) or looks_final_cost_label(col_s):
-                    mask_cols.append(col)
-                newcols.append(col)
-            df2 = df2.drop(columns=mask_cols, errors="ignore")
-            # also drop rows whose first col looks like a cost label
-            if df2.shape[1] > 0:
-                first_col_name = df2.columns[0]
-                drop_idx = []
-                for i, v in enumerate(df2[first_col_name].astype(str).tolist()):
-                    if hide_from_ui(v):
-                        drop_idx.append(i)
-                if drop_idx:
-                    df2 = df2.drop(df2.index[drop_idx])
-        st.dataframe(df2, use_container_width=True)
+c5, c6, c7 = st.columns(3)
+with c5:
+    st.metric("Drain cap (m³/s) ~ per channel", f"{Q_drain:.4f}")
+with c6:
+    st.metric("Bearing Pressure (kPa)", f"{bearing['bearing_pressure_kPa']:.1f}")
+    st.metric("FOS (Bearing vs SBC)", f"{bearing['FOS_bearing']:.2f}")
+with c7:
+    st.metric("FOS Outer Slope", f"{stab['FOS_outer']:.2f}")
+    st.metric("FOS Inner Slope", f"{stab['FOS_inner']:.2f}")
 
-# Download non-cost outputs
-colA, colB = st.columns([1,1])
-with colA:
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="xlsxwriter") as xw:
-        for sh, df in computed.items():
-            # drop costy columns/rows similar to UI
-            df2 = df.copy()
-            if not df2.empty and isinstance(df2.columns, pd.Index):
-                mask_cols = [c for c in df2.columns if hide_from_ui(c)]
-                df2 = df2.drop(columns=mask_cols, errors="ignore")
-                if df2.shape[1] > 0:
-                    first = df2.columns[0]
-                    keep_idx = [i for i,v in enumerate(df2[first].astype(str).tolist()) if not hide_from_ui(v)]
-                    df2 = df2.iloc[keep_idx] if keep_idx else df2.iloc[0:0]
-            df2.to_excel(xw, sheet_name=str(sh)[:31], index=False)
-    st.download_button("⬇️ Download non-cost outputs (Excel)", data=buf.getvalue(),
-                       file_name="SLF_outputs_non_cost.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+# ---------------- Visualizations ----------------
+st.markdown("### 7) Visualizations")
 
-with colB:
-    # CSV Zip
-    import tempfile, zipfile, os
-    tmp = tempfile.TemporaryDirectory()
-    zip_path = Path(tmp.name)/"SLF_outputs_non_cost_csv.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for sh, df in computed.items():
-            df2 = df.copy()
-            if not df2.empty and isinstance(df2.columns, pd.Index):
-                mask_cols = [c for c in df2.columns if hide_from_ui(c)]
-                df2 = df2.drop(columns=mask_cols, errors="ignore")
-                if df2.shape[1] > 0:
-                    first = df2.columns[0]
-                    keep_idx = [i for i,v in enumerate(df2[first].astype(str).tolist()) if not hide_from_ui(v)]
-                    df2 = df2.iloc[keep_idx] if keep_idx else df2.iloc[0:0]
-            zf.writestr(f"{sh}.csv", df2.to_csv(index=False).encode("utf-8"))
-    st.download_button("⬇️ Download non-cost outputs (CSV zip)", data=zip_path.read_bytes(),
-                       file_name="SLF_outputs_non_cost_csv.zip", mime="application/zip")
-
-# ---------------- Visualization (uses computed inputs) ----------------
-st.markdown("### 5) SLF Visualization")
-
-# Pull a few geometry parameters heuristically from edited inputs (overrides) or from workbook cells.
-# Defaults are safe if not found.
-def find_numeric_candidate(regex_list: List[str], fallback: float) -> float:
-    # Prioritize overrides (user edited), else try to mine from input labels
-    # If nothing, fallback
-    # (Since computed DF is arbitrary, we avoid scraping it for params)
-    for a1_key, v in overrides.items():
-        try:
-            vv = float(v)
-        except Exception:
-            continue
-        # We don't have labels for overrides directly; keep fallbacks for now.
-    # fallback
-    return fallback
-
-L = find_numeric_candidate([r"\blength\b"], 600.0)
-W = find_numeric_candidate([r"\bwidth\b"], 60.0)
-bund_top = find_numeric_candidate([r"bund.*top|crest|top\s*width"], 5.0)
-slope_out = find_numeric_candidate([r"outer.*slope"], 3.0)
-slope_in = find_numeric_candidate([r"inner.*slope"], 3.0)
-bench_h = find_numeric_candidate([r"bench.*height|lift.*height"], 5.0)
-bench_w = find_numeric_candidate([r"bench.*width"], 4.0)
-num_lifts = int(round(find_numeric_candidate([r"lifts|phases"], 4.0)))
-depth_bg = find_numeric_candidate([r"depth.*below.*ground|below.*gl"], 2.0)
-
-def section_profile(bund_top, slope_in, slope_out, bench_h, bench_w, lifts, depth_bg):
-    H = lifts * bench_h
-    z0 = -depth_bg
-    x = [0]; z = [z0]
-    x.append(H*slope_out); z.append(z0+H)
-    x.append(H*slope_out + bund_top/2); z.append(z0+H)
+def section_profile(geom: GeometryInputs, base_rl: float=0.0) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Construct a schematic longitudinal section profile through centerline.
+    """
+    H = calc_stack_height(geom)
+    z0 = base_rl - geom.depth_below_gl_m
+    # Outer slope up to bund crest (left)
+    x = [0.0]; z = [z0]
+    x.append(H*geom.outer_slope_h); z.append(z0+H)
+    x.append(H*geom.outer_slope_h + geom.bund_top_width_m/2); z.append(z0+H)
+    # Inner benches (terrace)
     bx = [x[-1]]; bz = [z[-1]]
     curx, curz = bx[0], bz[0]
-    for _ in range(lifts):
-        curx += bench_w
+    for _ in range(geom.num_lifts):
+        curx += geom.bench_width_m
         bx.append(curx); bz.append(curz)
-        curz += bench_h
+        curz += geom.lift_height_m
         bx.append(curx); bz.append(curz)
+    # Right crest and outer descent
     xr = [bx[-1]]; zr = [bz[-1]]
-    xr.append(xr[-1] + bund_top/2); zr.append(zr[-1])
-    xr.append(xr[-1] + H*slope_out); zr.append(z0)
+    xr.append(xr[-1] + geom.bund_top_width_m/2); zr.append(zr[-1])
+    xr.append(xr[-1] + H*geom.outer_slope_h); zr.append(z0)
     X = x + bx + xr
     Z = z + bz + zr
     return np.array(X), np.array(Z)
 
-def footprint(L, W, H, slope_out):
-    grow = H*slope_out
-    return L, W + 2*grow
-
-H_total = num_lifts * bench_h
-sx, sz = section_profile(bund_top, slope_in, slope_out, bench_h, bench_w, num_lifts, depth_bg)
-
+sx, sz = section_profile(g, p.benchmark_rl)
 v1, v2 = st.columns([1,1])
 with v1:
     fig1, ax1 = plt.subplots(figsize=(7,3))
     ax1.plot(sx, sz, linewidth=2)
-    ax1.axhline(0, linestyle="--", linewidth=1)
-    ax1.set_xlabel("Horizontal (m)"); ax1.set_ylabel("Elevation (m)")
-    ax1.set_title("Longitudinal Section (schematic)"); ax1.grid(True, linewidth=0.3)
+    ax1.axhline(p.benchmark_rl, linestyle="--", linewidth=1)
+    ax1.set_xlabel("Horizontal (m)")
+    ax1.set_ylabel("Elevation (m)")
+    ax1.set_title("Longitudinal Section (schematic)")
+    ax1.grid(True, linewidth=0.3)
     st.pyplot(fig1)
 
 with v2:
+    # For cross-section, reuse same profile (schematic intent)
     fig2, ax2 = plt.subplots(figsize=(7,3))
     ax2.plot(sx, sz, linewidth=2)
-    ax2.axhline(0, linestyle="--", linewidth=1)
-    ax2.set_xlabel("Horizontal (m)"); ax2.set_ylabel("Elevation (m)")
-    ax2.set_title("Cross Section (schematic)"); ax2.grid(True, linewidth=0.3)
+    ax2.axhline(p.benchmark_rl, linestyle="--", linewidth=1)
+    ax2.set_xlabel("Horizontal (m)")
+    ax2.set_ylabel("Elevation (m)")
+    ax2.set_title("Cross Section (schematic)")
+    ax2.grid(True, linewidth=0.3)
     st.pyplot(fig2)
 
-Fp_L, Fp_W = footprint(L, W, H_total, slope_out)
-st.caption(f"Estimated plan envelope ≈ {Fp_L:.2f} m × {Fp_W:.2f} m (outer)")
-
+# Plan view envelope
 fig3, ax3 = plt.subplots(figsize=(7,3.5))
-base_rect = plt.Rectangle((0, 0), L, W, fill=False, linewidth=1.5)
-outer_rect = plt.Rectangle((0, -(Fp_W-W)/2), L, Fp_W, fill=False, linestyle="--")
+base_rect = plt.Rectangle((0, 0), g.length_m, g.width_m, fill=False, linewidth=1.5, label="Inner base")
+outer_rect = plt.Rectangle((0, -(W_outer-g.width_m)/2), L_outer, W_outer, fill=False, linestyle="--", label="Outer envelope")
 ax3.add_patch(base_rect); ax3.add_patch(outer_rect)
-ax3.set_xlim(-5, L+5); ax3.set_ylim(-max(Fp_W,W)/1.8, max(Fp_W,W)/1.8)
-ax3.set_aspect("equal"); ax3.set_title("Plan View (site vs outer bund envelope)")
-ax3.set_xlabel("Length (m)"); ax3.set_ylabel("Width (m)"); ax3.grid(True, linewidth=0.3)
+ax3.set_xlim(-5, g.length_m+5)
+ax3.set_ylim(-max(W_outer, g.width_m)/1.8, max(W_outer, g.width_m)/1.8)
+ax3.set_aspect("equal")
+ax3.set_title("Plan View (Inner base vs Outer envelope)")
+ax3.set_xlabel("Length (m)"); ax3.set_ylabel("Width (m)")
+ax3.grid(True, linewidth=0.3)
+ax3.legend(loc="upper right")
 st.pyplot(fig3)
 
+# Simple 3D box (outer envelope)
 fig4 = plt.figure(figsize=(7,4))
 ax4 = fig4.add_subplot(111, projection='3d')
-X = [0, Fp_L, Fp_L, 0, 0]
-Y = [-(Fp_W/2), -(Fp_W/2), (Fp_W/2), (Fp_W/2), -(Fp_W/2)]
-Z = [0,0,0,0,0]
+X = [0, L_outer, L_outer, 0, 0]
+Y = [-(W_outer/2), -(W_outer/2), (W_outer/2), (W_outer/2), -(W_outer/2)]
+Z = [p.benchmark_rl, p.benchmark_rl, p.benchmark_rl, p.benchmark_rl, p.benchmark_rl]
 ax4.plot(X, Y, Z, linewidth=1.2)
-ax4.plot(X, Y, [H_total]*5, linewidth=1.2)
+ax4.plot(X, Y, [p.benchmark_rl+H_total]*5, linewidth=1.2)
 for i in range(4):
-    ax4.plot([X[i], X[i]], [Y[i], Y[i]], [0, H_total], linewidth=1.0)
-ax4.set_title("3D Preview (schematic)")
+    ax4.plot([X[i], X[i]], [Y[i], Y[i]], [p.benchmark_rl, p.benchmark_rl+H_total], linewidth=1.0)
+ax4.set_title("3D Preview (Outer Envelope)")
 ax4.set_xlabel("X (m)"); ax4.set_ylabel("Y (m)"); ax4.set_zlabel("Z (m)")
 st.pyplot(fig4)
 
-# ---------------- Footer ----------------
+# ---------------- Export final results (non-cost, independent) ----------------
+st.markdown("### 8) Export Final Results (Excel)")
+if st.button("⬇️ Export results to Excel"):
+    # Prepare sheets
+    inputs_df = pd.DataFrame({
+        "Category": ["Project","Project","Geometry","Geometry","Geometry","Geometry","Geometry","Geometry","Geometry","Geometry","Geometry","WasteOps","WasteOps","WasteOps","WasteOps","WasteOps","WasteOps","Hydrology","Hydrology","Hydrology","Hydrology","Hydrology","Geotech","Geotech","Geotech","Geotech","Geotech","Geotech"],
+        "Name": ["Project Name","Location","Length L (m)","Inner Width W (m)","Depth below GL (m)","Bund top width (m)","Outer slope (1:H)","Inner slope (1:H)","Lift height (m)","Bench width (m)","# Lifts","TPD","Bulk density (t/m3)","Daily cover (%)","Intermediate cover (%)","Final cover thk (m)","Settlement (%)","Runoff C","Design intensity (mm/hr)","Drain slope S (m/m)","Manning n","Leachate fraction","φ (deg)","c (kPa)","γ (kN/m3)","kh","SBC (kPa)","Footprint factor"],
+        "Value": [p.name, p.location, g.length_m, g.width_m, g.depth_below_gl_m, g.bund_top_width_m, g.outer_slope_h, g.inner_slope_h, g.lift_height_m, g.bench_width_m, g.num_lifts, w.tpd, w.bulk_density_tpm3, w.daily_cover_pct, w.intermediate_cover_pct, w.final_cover_thk_m, w.settlement_pct, h.runoff_coeff, h.design_intensity_mmphr, h.drainage_slope, h.manning_n, h.leachate_fraction_runoff, gt.phi_deg, gt.cohesion_kpa, gt.unit_weight_kNpm3, gt.seismic_kh, gt.foundation_sbc_kPa, gt.foundation_footprint_factor]
+    })
+
+    capacity_df = pd.DataFrame({
+        "Metric": ["Outer Length (m)","Outer Width (m)","Total Height H (m)", "Gross geometric volume (m³)","Final cover volume (m³)","Net waste volume (m³)","Life (days)","Life (years)"],
+        "Value": [L_outer, W_outer, H_total, cap["gross_geom_volume_m3"], cap["final_cover_volume_m3"], cap["net_waste_volume_m3"], life["life_days"], life["life_years"]]
+    })
+
+    hydro_df = pd.DataFrame({
+        "Metric": ["Runoff Area (m²)","C (–)","i (mm/hr)","Q_runoff (m³/s)","Leachate fraction","Q_leachate (m³/s)","Drain width (m)","Drain height (m)","Drain slope S","Manning n","Drain capacity ~ (m³/s)"],
+        "Value": [A_runoff, h.runoff_coeff, h.design_intensity_mmphr, Q_runoff, h.leachate_fraction_runoff, Q_leachate, g.drain_width_m, drain_h, h.drainage_slope, h.manning_n, Q_drain]
+    })
+
+    geotech_df = pd.DataFrame({
+        "Metric": ["Bearing pressure (kPa)","Allowable SBC (kPa)","FOS (bearing)","Outer slope β (deg)","Inner slope β (deg)","Rep. depth (m)","FOS outer slope","FOS inner slope"],
+        "Value": [bearing["bearing_pressure_kPa"], bearing["SBC_kPa"], bearing["FOS_bearing"], stab["beta_outer_deg"], stab["beta_inner_deg"], stab["rep_depth_m"], stab["FOS_outer"], stab["FOS_inner"]]
+    })
+
+    # Make an in-memory xlsx
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as xw:
+        inputs_df.to_excel(xw, sheet_name="Inputs", index=False)
+        capacity_df.to_excel(xw, sheet_name="Capacity & Life", index=False)
+        hydro_df.to_excel(xw, sheet_name="Hydrology & Drains", index=False)
+        geotech_df.to_excel(xw, sheet_name="Geotech & Stability", index=False)
+    st.download_button("Download SLF_Results.xlsx", data=buf.getvalue(),
+                       file_name="SLF_Results.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# ---------------- Footnotes ----------------
 st.markdown("""
 <div class="small-note">
-• All calculations are performed locally in this app instance.
-• Costing/rate/final-cost fields are computed internally (if linked) for accuracy, but are intentionally not shown or exported here.
-• Your rates will not be reused for any other user or purpose.
+This independent app does not read any external Excel. You can tune formulas inside the code blocks:
+<br>• <b>polygonal_volume_from_stair</b> (geometry/volume logic)
+<br>• <b>calc_waste_capacity_m3</b> & <b>calc_life_years</b> (capacity & life)
+<br>• <b>rational_Q</b>, <b>drain_capacity_rectangular</b> (hydrology & drains)
+<br>• <b>bearing_check</b>, <b>stability_checks</b> (bearing & slope FoS)
+<br><br>
+If you want this to mirror a specific Excel’s cell-by-cell math, paste those exact formulae into these functions — the UI and exports already support it.
 </div>
 """, unsafe_allow_html=True)
