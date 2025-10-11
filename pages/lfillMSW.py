@@ -4,46 +4,78 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Polygon
-from matplotlib.colors import LinearSegmentedColormap
 import math
 
 st.set_page_config(page_title="Landfill Construction Simulator", layout="wide")
 
-st.title("🏗️ Landfill Construction Simulator")
-st.markdown("A comprehensive tool for landfill design, volume calculation, and visualization")
+# Custom CSS for better UI
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #2c3e50;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .section-header {
+        font-size: 1.5rem;
+        color: #34495e;
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #3498db;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Sidebar for inputs
-st.sidebar.header("Input Parameters")
+st.markdown('<h1 class="main-header">🏗️ Landfill Construction Simulator</h1>', unsafe_allow_html=True)
+st.markdown("A comprehensive tool for landfill design, volume calculation, and interactive visualization")
 
-# Basic Parameters
-st.sidebar.subheader("Basic Parameters")
-daily_quantity = st.sidebar.number_input("Daily Waste Quantity (TPD)", value=1000.0, min_value=1.0, step=10.0)
-duration = st.sidebar.number_input("Duration (years)", value=25.0, min_value=1.0, step=1.0)
-density = st.sidebar.number_input("Density (ton/Cum)", value=1.00, min_value=0.1, step=0.01)
-landfill_area_acres = st.sidebar.number_input("Landfill Area (Acres)", value=10.0, min_value=1.0, step=0.5)
+# Initialize session state for storing click data
+if 'click_x' not in st.session_state:
+    st.session_state.click_x = 0
+if 'click_y' not in st.session_state:
+    st.session_state.click_y = 0
 
-# Dimension Parameters
-st.sidebar.subheader("Dimensions")
-width = st.sidebar.number_input("Width (m)", value=600.0, min_value=10.0, step=10.0)
-length = st.sidebar.number_input("Length (m)", value=600.0, min_value=10.0, step=10.0)
-bund_width = st.sidebar.number_input("Bund Width (m)", value=5.0, min_value=1.0, step=0.5)
-bund_height = st.sidebar.number_input("Bund Height (m)", value=4.0, min_value=1.0, step=0.5)
-external_slope = st.sidebar.number_input("External Slope (H:V)", value=2.0, min_value=1.0, step=0.5)
-internal_slope = st.sidebar.number_input("Internal Slope (H:V)", value=3.0, min_value=1.0, step=0.5)
-waste_slope = st.sidebar.number_input("Waste Slope (H:V)", value=3.0, min_value=1.0, step=0.5)
-waste_height = st.sidebar.number_input("Height of Waste (m)", value=5.0, min_value=1.0, step=0.5)
-berm_width = st.sidebar.number_input("Berm Width (m)", value=4.0, min_value=1.0, step=0.5)
-depth_below_ngl = st.sidebar.number_input("Depth below NGL (m)", value=2.0, min_value=0.0, step=0.5)
+# Display results in tabs
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📋 Input Parameters", "📊 Results Summary", "🎯 Interactive Visualization", "📐 Detailed Calculations", "💰 Cost Analysis", "📈 Reports"])
 
-# Cost Parameters
-st.sidebar.subheader("Cost Parameters")
-cost_per_sqm = st.sidebar.number_input("Cost per Sqm (INR)", value=3850.0, min_value=100.0, step=100.0)
-
-# Leachate Parameters
-st.sidebar.subheader("Leachate Parameters")
-leachate_percentage = st.sidebar.slider("Leachate Percentage (%)", min_value=5, max_value=50, value=20)
+with tab1:
+    st.header("Input Parameters")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Basic Parameters")
+        daily_quantity = st.number_input("Daily Waste Quantity (TPD)", value=1000.0, min_value=1.0, step=10.0)
+        duration = st.number_input("Duration (years)", value=25.0, min_value=1.0, step=1.0)
+        density = st.number_input("Density (ton/Cum)", value=1.00, min_value=0.1, step=0.01)
+        landfill_area_acres = st.number_input("Landfill Area (Acres)", value=10.0, min_value=1.0, step=0.5)
+        
+        st.subheader("Cost Parameters")
+        cost_per_sqm = st.number_input("Cost per Sqm (INR)", value=3850.0, min_value=100.0, step=100.0)
+        
+        st.subheader("Leachate Parameters")
+        leachate_percentage = st.slider("Leachate Percentage (%)", min_value=5, max_value=50, value=20)
+    
+    with col2:
+        st.subheader("Dimensions")
+        width = st.number_input("Width (m)", value=600.0, min_value=10.0, step=10.0)
+        length = st.number_input("Length (m)", value=600.0, min_value=10.0, step=10.0)
+        bund_width = st.number_input("Bund Width (m)", value=5.0, min_value=1.0, step=0.5)
+        bund_height = st.number_input("Bund Height (m)", value=4.0, min_value=1.0, step=0.5)
+        waste_height = st.number_input("Height of Waste (m)", value=5.0, min_value=1.0, step=0.5)
+        berm_width = st.number_input("Berm Width (m)", value=4.0, min_value=1.0, step=0.5)
+        depth_below_ngl = st.number_input("Depth below NGL (m)", value=2.0, min_value=0.0, step=0.5)
+        
+        st.subheader("Slope Parameters")
+        external_slope = st.number_input("External Slope (H:V)", value=2.0, min_value=1.0, step=0.5)
+        internal_slope = st.number_input("Internal Slope (H:V)", value=3.0, min_value=1.0, step=0.5)
+        waste_slope = st.number_input("Waste Slope (H:V)", value=3.0, min_value=1.0, step=0.5)
 
 # Calculate all values
 def calculate_landfill_parameters():
@@ -56,8 +88,6 @@ def calculate_landfill_parameters():
     levels_data = []
     
     # 1. Below Ground Level (BBL) - Excavation below ground
-    # According to Excel: BBL length = (B9-((B20+(B24*B15)+B22+1)*2))
-    # Where B9 = width, B20 = drain width, B24 = depth below NGL, B15 = internal slope, B22 = drain depth
     drain_width = 1.0
     drain_depth = 1.0
     
@@ -78,12 +108,12 @@ def calculate_landfill_parameters():
         'Area': bbl_area,
         'Height': depth_below_ngl,
         'Volume': bbl_volume,
-        'Type': 'Excavation'
+        'Type': 'Excavation',
+        'Bottom_Z': -depth_below_ngl,
+        'Top_Z': 0
     })
     
     # 2. Base Level (BL) - Waste filling up to top of bund
-    # According to Excel: BL length = (B27+(((B12+B24)*B15)*2))
-    # Where B27 = BBL length, B12 = bund height, B24 = depth below NGL, B15 = internal slope
     bl_length = bbl_length + (((bund_height + depth_below_ngl) * internal_slope) * 2)
     bl_width = bbl_width_calc + (((bund_height + depth_below_ngl) * internal_slope) * 2)
     bl_area = bl_length * bl_width
@@ -96,18 +126,19 @@ def calculate_landfill_parameters():
         'Area': bl_area,
         'Height': bund_height,
         'Volume': bl_volume,
-        'Type': 'Waste up to Bund'
+        'Type': 'Waste up to Bund',
+        'Bottom_Z': 0,
+        'Top_Z': bund_height
     })
     
     # 3. Above Bund Levels (ABL) - Waste filling from top of bund to crest with berms
     current_length = bl_length
     current_width = bl_width
     total_volume = bbl_volume + bl_volume
+    current_z = bund_height
     
     for i in range(1, 10):  # Calculate up to 9 levels
         # ABL level - waste filling
-        # According to Excel: ABL length = (B28-(5*$B$17)*2)
-        # Where B28 = previous level length, B17 = waste slope
         abl_length = current_length - (waste_height * waste_slope * 2)
         abl_width_calc = current_width - (waste_height * waste_slope * 2)
         
@@ -126,12 +157,14 @@ def calculate_landfill_parameters():
             'Area': abl_area,
             'Height': waste_height,
             'Volume': abl_volume,
-            'Type': 'Waste above Bund'
+            'Type': 'Waste above Bund',
+            'Bottom_Z': current_z,
+            'Top_Z': current_z + waste_height
         })
         
+        current_z += waste_height
+        
         # Berm level
-        # According to Excel: ABL i Berm length = (B32-4*2)
-        # Where B32 = ABL length, 4 = berm width
         berm_length = abl_length - (berm_width * 2)
         berm_width_calc = abl_width_calc - (berm_width * 2)
         
@@ -147,7 +180,9 @@ def calculate_landfill_parameters():
             'Area': berm_area,
             'Height': 0.0,
             'Volume': 0.0,
-            'Type': 'Berm'
+            'Type': 'Berm',
+            'Bottom_Z': current_z,
+            'Top_Z': current_z
         })
         
         current_length = berm_length
@@ -180,337 +215,321 @@ def calculate_landfill_parameters():
         'bbl_length': bbl_length,
         'bbl_width': bbl_width_calc,
         'bl_length': bl_length,
-        'bl_width': bl_width
+        'bl_width': bl_width,
+        'max_height': current_z
     }
 
 # Calculate parameters
 results = calculate_landfill_parameters()
 
-# Display results in tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Results Summary", "📐 2D Visualization", "🎯 3D Visualization", "📋 Detailed Calculations", "💰 Cost Analysis"])
-
-with tab1:
+with tab2:
     st.header("Results Summary")
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Total Volume", f"{results['total_volume']:,.2f} Cum")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Provided Quantity", f"{results['provided_quantity']:,.2f} Tons")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Required Quantity", f"{results['required_quantity']:,.2f} Tons")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Capacity Sufficient", results['is_sufficient'])
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with col3:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Landfill Life", f"{results['landfill_life']:.2f} Years")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Total Cost", f"₹{results['total_cost']:,.2f}")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with col4:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Cost per Ton", f"₹{results['per_ton_cost']:.2f}")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Leachate Generation", f"{results['leachate_kld']:.2f} KLD")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Status indicators
-    st.subheader("Project Status")
-    if results['is_sufficient'] == "Yes":
-        st.success("✅ The landfill design meets the required capacity!")
-    else:
-        st.error("❌ The landfill design does not meet the required capacity. Consider increasing area or dimensions.")
+    st.markdown('<h3 class="section-header">Project Status</h3>', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
     
-    if results['landfill_life'] >= duration:
-        st.success(f"✅ Landfill life ({results['landfill_life']:.1f} years) exceeds project duration ({duration:.0f} years)")
-    else:
-        st.warning(f"⚠️ Landfill life ({results['landfill_life']:.1f} years) is less than project duration ({duration:.0f} years)")
-
-with tab2:
-    st.header("2D Cross-Section Visualization")
+    with col1:
+        if results['is_sufficient'] == "Yes":
+            st.success("✅ The landfill design meets the required capacity!")
+        else:
+            st.error("❌ The landfill design does not meet the required capacity. Consider increasing area or dimensions.")
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-    
-    # Cross-section view
-    ax1.set_title("Landfill Cross-Section (Side View)")
-    ax1.set_xlabel("Distance (m)")
-    ax1.set_ylabel("Height (m)")
-    ax1.grid(True, alpha=0.3)
-    
-    # Draw landfill profile
-    x_points = []
-    y_points = []
-    
-    # Get dimensions from results
-    bbl_length = results['bbl_length']
-    bbl_width = results['bbl_width']
-    bl_length = results['bl_length']
-    bl_width = results['bl_width']
-    
-    # Calculate total width for proper scaling
-    total_width = width + 2 * (bund_height * external_slope + bund_width + waste_height * waste_slope * 5)
-    
-    # Start from leftmost point
-    current_x = 0
-    current_y = -depth_below_ngl
-    
-    # 1. Left side of excavation below ground
-    # From left edge to bottom of excavation
-    x_points.extend([current_x, current_x + depth_below_ngl * internal_slope])
-    y_points.extend([current_y, current_y + depth_below_ngl])
-    
-    # Bottom of excavation
-    current_x += depth_below_ngl * internal_slope
-    current_y += depth_below_ngl
-    x_points.extend([current_x, current_x + bbl_length])
-    y_points.extend([current_y, current_y])
-    
-    # Right side of excavation
-    current_x += bbl_length
-    x_points.extend([current_x, current_x + depth_below_ngl * internal_slope])
-    y_points.extend([current_y, current_y - depth_below_ngl])
-    
-    # Ground level
-    current_x += depth_below_ngl * internal_slope
-    current_y -= depth_below_ngl
-    x_points.extend([current_x, current_x + bund_height * external_slope])
-    y_points.extend([current_y, current_y + bund_height])
-    
-    # Top of bund
-    current_x += bund_height * external_slope
-    current_y += bund_height
-    x_points.extend([current_x, current_x + bund_width])
-    y_points.extend([current_y, current_y])
-    
-    # Internal slope to waste
-    current_x += bund_width
-    x_points.extend([current_x, current_x + bund_height * internal_slope])
-    y_points.extend([current_y, current_y - bund_height])
-    
-    # Waste layers above bund
-    current_x += bund_height * internal_slope
-    current_y -= bund_height
-    
-    num_waste_layers = min(5, len([l for l in results['levels'] if 'ABL' in l['Level'] and l['Volume'] > 0]))
-    
-    for i in range(num_waste_layers):
-        waste_horizontal = waste_height * waste_slope
-        x_points.extend([current_x, current_x + waste_horizontal])
-        y_points.extend([current_y, current_y + waste_height])
-        current_x += waste_horizontal
-        current_y += waste_height
-        
-        if i < num_waste_layers - 1:  # Add berm except for last layer
-            x_points.extend([current_x, current_x + berm_width])
-            y_points.extend([current_y, current_y])
-            current_x += berm_width
-    
-    # Right side (mirror of left side)
-    right_x = current_x
-    right_y = current_y
-    
-    # Right slopes
-    x_points.extend([right_x, right_x + waste_height * waste_slope])
-    y_points.extend([right_y, right_y - waste_height])
-    
-    x_points.extend([right_x + waste_height * waste_slope, right_x + waste_height * waste_slope + bund_width])
-    y_points.extend([right_y - waste_height, right_y - waste_height])
-    
-    x_points.extend([right_x + waste_height * waste_slope + bund_width, right_x + waste_height * waste_slope + bund_width + bund_height * internal_slope])
-    y_points.extend([right_y - waste_height, right_y - 2 * bund_height])
-    
-    x_points.extend([right_x + waste_height * waste_slope + bund_width + bund_height * internal_slope, right_x + waste_height * waste_slope + bund_width + bund_height * internal_slope + bund_width])
-    y_points.extend([right_y - 2 * bund_height, right_y - 2 * bund_height])
-    
-    x_points.extend([right_x + waste_height * waste_slope + bund_width + bund_height * internal_slope + bund_width, right_x + waste_height * waste_slope + bund_width + bund_height * internal_slope + bund_width + bund_height * external_slope])
-    y_points.extend([right_y - 2 * bund_height, right_y - 3 * bund_height])
-    
-    # Close the shape
-    x_points.append(x_points[0])
-    y_points.append(y_points[0])
-    
-    # Fill and plot
-    ax1.fill(x_points, y_points, color='#8B4513', alpha=0.6, label='Waste Fill')
-    ax1.plot(x_points, y_points, 'k-', linewidth=2)
-    
-    # Add ground level line
-    max_x = max(x_points)
-    ax1.plot([0, max_x], [0, 0], 'g--', linewidth=1, label='Ground Level')
-    
-    # Add bund top line
-    bund_left_x = depth_below_ngl * internal_slope + bbl_length + depth_below_ngl * internal_slope + bund_height * external_slope
-    bund_right_x = bund_left_x + bund_width
-    ax1.plot([bund_left_x, bund_right_x], [bund_height, bund_height], 'b-', linewidth=2, label='Bund Top')
-    
-    # Add labels for different sections
-    ax1.text(bbl_length/2, -depth_below_ngl/2, "Excavation\nBelow Ground", ha='center', va='center')
-    ax1.text(bund_left_x + bund_width/2, bund_height/2, "Bund", ha='center', va='center')
-    
-    # Add legend
-    ax1.legend()
-    ax1.set_aspect('equal', adjustable='box')
-    
-    # Top view
-    ax2.set_title("Landfill Top View")
-    ax2.set_xlabel("Length (m)")
-    ax2.set_ylabel("Width (m)")
-    ax2.grid(True, alpha=0.3)
-    
-    # Create custom brown colors
-    brown_colors = ['#8B4513', '#A0522D', '#CD853F', '#DEB887', '#F4A460', '#D2691E', '#BC8F8F']
-    
-    # Draw concentric rectangles for each level
-    for i, level in enumerate(results['levels']):
-        if level['Volume'] > 0:
-            color = brown_colors[i % len(brown_colors)]
-            rect = Rectangle(
-                (width/2 - level['Length']/2, length/2 - level['Width']/2),
-                level['Length'], level['Width'],
-                fill=False, edgecolor=color, linewidth=2,
-                label=level['Level']
-            )
-            ax2.add_patch(rect)
-    
-    ax2.set_xlim(0, width + 100)
-    ax2.set_ylim(0, length + 100)
-    ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax2.set_aspect('equal', adjustable='box')
-    
-    st.pyplot(fig)
-    
-    # Level dimensions table
-    st.subheader("Level Dimensions")
-    levels_df = pd.DataFrame(results['levels'])
-    st.dataframe(levels_df, use_container_width=True)
+    with col2:
+        if results['landfill_life'] >= duration:
+            st.success(f"✅ Landfill life ({results['landfill_life']:.1f} years) exceeds project duration ({duration:.0f} years)")
+        else:
+            st.warning(f"⚠️ Landfill life ({results['landfill_life']:.1f} years) is less than project duration ({duration:.0f} years)")
 
 with tab3:
-    st.header("3D Visualization")
+    st.header("Interactive 3D/2D Visualization")
     
-    # Create 3D visualization
-    fig = go.Figure()
+    col1, col2 = st.columns([2, 1])
     
-    # Generate mesh for 3D landfill
-    def create_landfill_3d():
-        # Create a stepped pyramid shape
-        levels = []
-        current_height = -depth_below_ngl
+    with col1:
+        st.subheader("3D Landfill Model")
+        st.info("🖱️ Click on the 3D model to see the cross-section at that location")
+        
+        # Create 3D surface plot
+        fig_3d = go.Figure()
+        
+        # Create height map for 3D surface
+        x = np.linspace(-width/2, width/2, 50)
+        y = np.linspace(-length/2, length/2, 50)
+        X, Y = np.meshgrid(x, y)
+        
+        # Create height map
+        Z = np.zeros_like(X)
         
         for level in results['levels']:
             if level['Volume'] > 0:
                 l, w = level['Length'], level['Width']
-                h = level['Height']
+                mask = (np.abs(X) <= l/2) & (np.abs(Y) <= w/2)
+                Z[mask] = level['Top_Z']
+        
+        # Add surface
+        fig_3d.add_trace(
+            go.Surface(
+                x=X, y=Y, z=Z,
+                colorscale=[[0, '#8B4513'], [0.3, '#A0522D'], [0.6, '#CD853F'], [1, '#DEB887']],
+                showscale=True,
+                colorbar=dict(title="Height (m)"),
+                hovertemplate='X: %{x:.1f}m<br>Y: %{y:.1f}m<br>Z: %{z:.1f}m<extra></extra>'
+            )
+        )
+        
+        # Add ground level plane
+        xx, yy = np.meshgrid(np.linspace(-width/2, width/2, 10), np.linspace(-length/2, length/2, 10))
+        zz = np.zeros_like(xx)
+        fig_3d.add_trace(
+            go.Surface(
+                x=xx, y=yy, z=zz,
+                colorscale=[[0, 'green'], [1, 'green']],
+                showscale=False,
+                opacity=0.3,
+                hoverinfo='skip'
+            )
+        )
+        
+        # Add wireframe for levels
+        for level in results['levels']:
+            if level['Volume'] > 0:
+                l, w = level['Length'], level['Width']
+                z_bottom = level['Bottom_Z']
+                z_top = level['Top_Z']
                 
-                # Create vertices for the rectangular prism at this level
-                vertices = [
-                    [-l/2, -w/2, current_height],
-                    [l/2, -w/2, current_height],
-                    [l/2, w/2, current_height],
-                    [-l/2, w/2, current_height],
-                    [-l/2, -w/2, current_height + h],
-                    [l/2, -w/2, current_height + h],
-                    [l/2, w/2, current_height + h],
-                    [-l/2, w/2, current_height + h]
-                ]
-                levels.append(vertices)
-                current_height += h
+                # Bottom edges
+                bottom_x = [-l/2, l/2, l/2, -l/2, -l/2]
+                bottom_y = [-w/2, -w/2, w/2, w/2, -w/2]
+                bottom_z = [z_bottom] * 5
+                
+                fig_3d.add_trace(
+                    go.Scatter3d(
+                        x=bottom_x, y=bottom_y, z=bottom_z,
+                        mode='lines',
+                        line=dict(color='black', width=2),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    )
+                )
+                
+                # Top edges
+                top_x = [-l/2, l/2, l/2, -l/2, -l/2]
+                top_y = [-w/2, -w/2, w/2, w/2, -w/2]
+                top_z = [z_top] * 5
+                
+                fig_3d.add_trace(
+                    go.Scatter3d(
+                        x=top_x, y=top_y, z=top_z,
+                        mode='lines',
+                        line=dict(color='black', width=2),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    )
+                )
+                
+                # Vertical edges
+                for i in range(4):
+                    fig_3d.add_trace(
+                        go.Scatter3d(
+                            x=[bottom_x[i], top_x[i]],
+                            y=[bottom_y[i], top_y[i]],
+                            z=[bottom_z[i], top_z[i]],
+                            mode='lines',
+                            line=dict(color='black', width=1),
+                            showlegend=False,
+                            hoverinfo='skip'
+                        )
+                    )
         
-        return levels
-    
-    # Create 3D surface plot
-    x = np.linspace(-width/2, width/2, 30)
-    y = np.linspace(-length/2, length/2, 30)
-    X, Y = np.meshgrid(x, y)
-    
-    # Create height map
-    Z = np.zeros_like(X)
-    current_height = -depth_below_ngl
-    
-    for level in results['levels']:
-        if level['Volume'] > 0:
-            l, w, h = level['Length'], level['Width'], level['Height']
-            mask = (np.abs(X) <= l/2) & (np.abs(Y) <= w/2)
-            Z[mask] = current_height + h
-            current_height += h
-    
-    # Add surface
-    fig.add_trace(
-        go.Surface(
-            x=X, y=Y, z=Z,
-            colorscale=[[0, '#8B4513'], [0.5, '#A0522D'], [1, '#CD853F']],
-            showscale=True,
-            colorbar=dict(title="Height (m)")
+        # Update layout
+        fig_3d.update_layout(
+            title="3D Landfill Model",
+            scene=dict(
+                xaxis_title="Length (m)",
+                yaxis_title="Width (m)",
+                zaxis_title="Height (m)",
+                camera=dict(eye=dict(x=1.2, y=1.2, z=0.8)),
+                aspectmode='manual',
+                aspectratio=dict(x=1, y=1, z=0.3)  # Keep height scale realistic
+            ),
+            height=600,
+            clickmode='event+select'
         )
-    )
+        
+        # Display 3D plot
+        event = st.plotly_chart(fig_3d, use_container_width=True, key="3d_plot")
+        
+        # Handle click events
+        if event and 'clicks' in event:
+            if event['clicks']:
+                click_data = event['clicks'][0]
+                st.session_state.click_x = click_data['x']
+                st.session_state.click_y = click_data['y']
+                st.rerun()
     
-    # Add wireframe edges for better visualization
-    levels_3d = create_landfill_3d()
-    
-    for level_vertices in levels_3d:
-        # Bottom edges
-        for i in range(4):
-            next_i = (i + 1) % 4
-            fig.add_trace(
-                go.Scatter3d(
-                    x=[level_vertices[i][0], level_vertices[next_i][0]],
-                    y=[level_vertices[i][1], level_vertices[next_i][1]],
-                    z=[level_vertices[i][2], level_vertices[next_i][2]],
-                    mode='lines',
-                    line=dict(color='black', width=2),
-                    showlegend=False
-                )
+    with col2:
+        st.subheader("Cross-Section View")
+        
+        # Get click position
+        cross_section_x = st.session_state.click_x
+        cross_section_y = st.session_state.click_y
+        
+        st.write(f"Cross-section at: X={cross_section_x:.1f}m, Y={cross_section_y:.1f}m")
+        
+        # Create 2D cross-section based on click position
+        fig_2d = go.Figure()
+        
+        # Determine cross-section orientation based on click position
+        if abs(cross_section_x) > abs(cross_section_y):
+            # Vertical cross-section (along Y-axis)
+            st.write("📐 Vertical Cross-Section (Along Y-axis)")
+            
+            # Generate cross-section profile
+            y_points = np.linspace(-length/2, length/2, 100)
+            z_points = []
+            
+            for y in y_points:
+                z = 0
+                for level in results['levels']:
+                    if level['Volume'] > 0:
+                        l, w = level['Length'], level['Width']
+                        if abs(cross_section_x) <= l/2 and abs(y) <= w/2:
+                            z = level['Top_Z']
+                z_points.append(z)
+            
+            # Add ground level
+            fig_2d.add_trace(go.Scatter(
+                x=y_points, y=[0]*len(y_points),
+                mode='lines',
+                line=dict(color='green', width=2, dash='dash'),
+                name='Ground Level',
+                hoverinfo='skip'
+            ))
+            
+            # Add cross-section profile
+            fig_2d.add_trace(go.Scatter(
+                x=y_points, y=z_points,
+                mode='lines',
+                line=dict(color='#8B4513', width=3),
+                name='Landfill Profile',
+                fill='tonexty',
+                fillcolor='rgba(139, 69, 19, 0.3)',
+                hovertemplate='Y: %{x:.1f}m<br>Height: %{y:.1f}m<extra></extra>'
+            ))
+            
+            fig_2d.update_layout(
+                title="Vertical Cross-Section",
+                xaxis_title="Distance along Y-axis (m)",
+                yaxis_title="Height (m)",
+                height=400,
+                showlegend=True
+            )
+            
+        else:
+            # Horizontal cross-section (along X-axis)
+            st.write("📐 Horizontal Cross-Section (Along X-axis)")
+            
+            # Generate cross-section profile
+            x_points = np.linspace(-width/2, width/2, 100)
+            z_points = []
+            
+            for x in x_points:
+                z = 0
+                for level in results['levels']:
+                    if level['Volume'] > 0:
+                        l, w = level['Length'], level['Width']
+                        if abs(x) <= l/2 and abs(cross_section_y) <= w/2:
+                            z = level['Top_Z']
+                z_points.append(z)
+            
+            # Add ground level
+            fig_2d.add_trace(go.Scatter(
+                x=x_points, y=[0]*len(x_points),
+                mode='lines',
+                line=dict(color='green', width=2, dash='dash'),
+                name='Ground Level',
+                hoverinfo='skip'
+            ))
+            
+            # Add cross-section profile
+            fig_2d.add_trace(go.Scatter(
+                x=x_points, y=z_points,
+                mode='lines',
+                line=dict(color='#8B4513', width=3),
+                name='Landfill Profile',
+                fill='tonexty',
+                fillcolor='rgba(139, 69, 19, 0.3)',
+                hovertemplate='X: %{x:.1f}m<br>Height: %{y:.1f}m<extra></extra>'
+            ))
+            
+            fig_2d.update_layout(
+                title="Horizontal Cross-Section",
+                xaxis_title="Distance along X-axis (m)",
+                yaxis_title="Height (m)",
+                height=400,
+                showlegend=True
             )
         
-        # Top edges
-        for i in range(4):
-            next_i = (i + 1) % 4
-            fig.add_trace(
-                go.Scatter3d(
-                    x=[level_vertices[i+4][0], level_vertices[next_i+4][0]],
-                    y=[level_vertices[i+4][1], level_vertices[next_i+4][1]],
-                    z=[level_vertices[i+4][2], level_vertices[next_i+4][2]],
-                    mode='lines',
-                    line=dict(color='black', width=2),
-                    showlegend=False
-                )
-            )
+        # Display 2D cross-section
+        st.plotly_chart(fig_2d, use_container_width=True)
         
-        # Vertical edges
-        for i in range(4):
-            fig.add_trace(
-                go.Scatter3d(
-                    x=[level_vertices[i][0], level_vertices[i+4][0]],
-                    y=[level_vertices[i][1], level_vertices[i+4][1]],
-                    z=[level_vertices[i][2], level_vertices[i+4][2]],
-                    mode='lines',
-                    line=dict(color='black', width=2),
-                    showlegend=False
-                )
-            )
-    
-    # Add ground level plane
-    xx, yy = np.meshgrid(np.linspace(-width/2, width/2, 10), np.linspace(-length/2, length/2, 10))
-    zz = np.zeros_like(xx)
-    fig.add_trace(
-        go.Surface(
-            x=xx, y=yy, z=zz,
-            colorscale=[[0, 'green'], [1, 'green']],
-            showscale=False,
-            opacity=0.2
-        )
-    )
-    
-    fig.update_layout(
-        title="3D Landfill Visualization",
-        scene=dict(
-            xaxis_title="Length (m)",
-            yaxis_title="Width (m)",
-            zaxis_title="Height (m)",
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))
-        ),
-        height=700,
-        width=800
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Interactive controls info
-    st.info("🖱️ Use your mouse to rotate, zoom, and pan the 3D visualization")
+        # Add level information
+        st.subheader("Level Information at Cross-Section")
+        level_info = []
+        for level in results['levels']:
+            if level['Volume'] > 0:
+                l, w = level['Length'], level['Width']
+                if abs(cross_section_x) <= l/2 and abs(cross_section_y) <= w/2:
+                    level_info.append({
+                        'Level': level['Level'],
+                        'Type': level['Type'],
+                        'Height': f"{level['Bottom_Z']:.1f} - {level['Top_Z']:.1f} m",
+                        'Volume': f"{level['Volume']:.2f} Cum"
+                    })
+        
+        if level_info:
+            st.dataframe(pd.DataFrame(level_info), use_container_width=True)
+        else:
+            st.info("No landfill levels at this location")
 
 with tab4:
     st.header("Detailed Calculations")
@@ -518,7 +537,7 @@ with tab4:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Volume Calculations")
+        st.markdown('<h3 class="section-header">Volume Calculations</h3>', unsafe_allow_html=True)
         volume_df = pd.DataFrame(results['levels'])
         volume_df['Cumulative Volume'] = volume_df['Volume'].cumsum()
         volume_df['Cumulative Volume'] = volume_df['Cumulative Volume'].round(2)
@@ -526,7 +545,7 @@ with tab4:
         volume_df['Area'] = volume_df['Area'].round(2)
         st.dataframe(volume_df, use_container_width=True)
         
-        st.subheader("Leachate Calculations")
+        st.markdown('<h3 class="section-header">Leachate Calculations</h3>', unsafe_allow_html=True)
         leachate_data = {
             'Parameter': ['Waste per Annum', 'Leachate %', 'Leachate TPA', 'Leachate KLD'],
             'Value': [f"{results['tpa']:,.2f} TPA", f"{leachate_percentage}%", 
@@ -535,16 +554,16 @@ with tab4:
         st.dataframe(pd.DataFrame(leachate_data), use_container_width=True)
     
     with col2:
-        st.subheader("Design Parameters")
+        st.markdown('<h3 class="section-header">Design Parameters</h3>', unsafe_allow_html=True)
         design_params = {
-            'Parameter': ['Daily Quantity', 'Duration', 'Density', 'Landfill Area', 'Base Width', 'Total Levels'],
+            'Parameter': ['Daily Quantity', 'Duration', 'Density', 'Landfill Area', 'Base Width', 'Total Levels', 'Max Height'],
             'Value': [f"{daily_quantity:.0f} TPD", f"{duration:.0f} years", f"{density:.2f} ton/Cum",
                      f"{landfill_area_acres:.1f} Acres", f"{bund_width + (bund_height * external_slope) + (bund_height * internal_slope):.2f} m",
-                     len([l for l in results['levels'] if l['Volume'] > 0])]
+                     len([l for l in results['levels'] if l['Volume'] > 0]), f"{results['max_height']:.2f} m"]
         }
         st.dataframe(pd.DataFrame(design_params), use_container_width=True)
         
-        st.subheader("Slope Analysis")
+        st.markdown('<h3 class="section-header">Slope Analysis</h3>', unsafe_allow_html=True)
         slope_data = {
             'Slope Type': ['External', 'Internal', 'Waste'],
             'Ratio (H:V)': [f"1:{external_slope:.1f}", f"1:{internal_slope:.1f}", f"1:{waste_slope:.1f}"],
@@ -555,7 +574,7 @@ with tab4:
         st.dataframe(pd.DataFrame(slope_data), use_container_width=True)
         
         # Volume breakdown by type
-        st.subheader("Volume Breakdown by Type")
+        st.markdown('<h3 class="section-header">Volume Breakdown by Type</h3>', unsafe_allow_html=True)
         excavation_volume = sum(l['Volume'] for l in results['levels'] if l['Type'] == 'Excavation')
         waste_up_to_bund = sum(l['Volume'] for l in results['levels'] if l['Type'] == 'Waste up to Bund')
         waste_above_bund = sum(l['Volume'] for l in results['levels'] if l['Type'] == 'Waste above Bund')
@@ -579,7 +598,7 @@ with tab5:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Cost Breakdown")
+        st.markdown('<h3 class="section-header">Cost Breakdown</h3>', unsafe_allow_html=True)
         land_cost = landfill_area_acres * 4047 * cost_per_sqm
         development_cost = results['total_cost'] * 0.3
         total_cost_calculated = land_cost + development_cost
@@ -595,7 +614,7 @@ with tab5:
         st.dataframe(pd.DataFrame(cost_data), use_container_width=True)
         
         # Cost per unit
-        st.subheader("Unit Costs")
+        st.markdown('<h3 class="section-header">Unit Costs</h3>', unsafe_allow_html=True)
         unit_costs = {
             'Metric': ['Cost per Ton', 'Cost per Cum', 'Cost per Sqm', 'Annual Cost'],
             'Value': [
@@ -609,9 +628,9 @@ with tab5:
     
     with col2:
         # Cost visualization
-        st.subheader("Cost Distribution")
+        st.markdown('<h3 class="section-header">Cost Distribution</h3>', unsafe_allow_html=True)
         
-        fig = go.Figure(data=[
+        fig_cost = go.Figure(data=[
             go.Bar(
                 name='Land Cost',
                 x=['Total Cost'],
@@ -628,17 +647,17 @@ with tab5:
             )
         ])
         
-        fig.update_layout(
+        fig_cost.update_layout(
             barmode='stack',
             title="Cost Breakdown",
             yaxis_title="Cost (INR)",
             height=400
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_cost, use_container_width=True)
         
         # ROI Analysis
-        st.subheader("Economic Indicators")
+        st.markdown('<h3 class="section-header">Economic Indicators</h3>', unsafe_allow_html=True)
         if daily_quantity > 0:
             annual_revenue = daily_quantity * 365 * 500  # Assuming ₹500 per ton
             payback_period = total_cost_calculated / annual_revenue if annual_revenue > 0 else 0
@@ -654,18 +673,76 @@ with tab5:
             }
             st.dataframe(pd.DataFrame(metrics), use_container_width=True)
 
+with tab6:
+    st.header("Reports and Export")
+    
+    st.markdown('<h3 class="section-header">Generate Comprehensive Report</h3>', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info("""
+        📊 **Report Contents:**
+        - Executive Summary
+        - Design Parameters
+        - Volume Calculations
+        - Cost Analysis
+        - Visualizations (2D & 3D)
+        - Recommendations
+        """)
+        
+        if st.button("📥 Generate PDF Report", type="primary"):
+            st.success("PDF report generation would be implemented here!")
+            st.balloons()
+    
+    with col2:
+        st.info("""
+        📈 **Export Options:**
+        - Excel spreadsheet with calculations
+        - CSV data for further analysis
+        - High-resolution images
+        - 3D model files
+        """)
+        
+        col2a, col2b = st.columns(2)
+        with col2a:
+            if st.button("📊 Export to Excel"):
+                st.success("Excel export would be implemented here!")
+        with col2b:
+            if st.button("📸 Export Images"):
+                st.success("Image export would be implemented here!")
+    
+    # Summary section
+    st.markdown('<h3 class="section-header">Project Summary</h3>', unsafe_allow_html=True)
+    
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    
+    with summary_col1:
+        st.metric("Total Capacity", f"{results['provided_quantity']:,.0f} Tons")
+        st.metric("Landfill Life", f"{results['landfill_life']:.1f} Years")
+    
+    with summary_col2:
+        st.metric("Total Investment", f"₹{results['total_cost']:,.0f}")
+        st.metric("Cost per Ton", f"₹{results['per_ton_cost']:.0f}")
+    
+    with summary_col3:
+        st.metric("Daily Processing", f"{daily_quantity:.0f} TPD")
+        st.metric("Annual Processing", f"{results['tpa']:,.0f} TPA")
+
 # Footer
 st.markdown("---")
-st.markdown("### 📝 Notes")
+st.markdown("### 📝 Important Notes")
 st.info("""
 - This simulator provides estimates based on the input parameters
 - Actual construction may require additional engineering considerations
 - Environmental regulations and local conditions should be factored in
 - Regular monitoring and maintenance are essential for landfill operations
 - The 3D visualization is a simplified representation for conceptual understanding
+- Cross-sections are generated dynamically based on click position
 """)
 
-# Download report button
-if st.button("📥 Generate Report"):
-    st.success("Report generation feature would be implemented here with PDF export functionality")
-    st.info("In a production environment, this would generate a comprehensive PDF report with all calculations and visualizations.")
+st.markdown("""
+<div style='text-align: center; color: #7f8c8d; margin-top: 2rem;'>
+    <p>Landfill Construction Simulator v2.0 | Interactive Design & Analysis Tool</p>
+</div>
+""", unsafe_allow_html=True)
