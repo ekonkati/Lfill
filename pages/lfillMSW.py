@@ -310,85 +310,112 @@ with tab2:
         else:
             st.warning(f"⚠️ Landfill life ({results['landfill_life']:.1f} years) is less than project duration ({duration:.0f} years)")
 
-def create_proper_bund_profile(x_points, cross_section_x, cross_section_y, is_vertical):
-    """Create proper bund profile with slopes based on landfill geometry"""
+def create_realistic_cross_section_profile(points, cross_section_pos, is_vertical):
+    """Create realistic cross-section profile with proper bund structure"""
+    profile = []
     bund_profile = []
     
-    # Calculate bund dimensions
+    # Calculate bund geometry
     bund_inner_length = results['bl_length']
     bund_inner_width = results['bl_width']
     bund_outer_length = bund_inner_length + 2 * (bund_height * external_slope)
     bund_outer_width = bund_inner_width + 2 * (bund_height * external_slope)
     
-    for x in x_points:
+    for point in points:
         if is_vertical:
             # Vertical cross-section (along Y-axis)
-            # Check if point is within bund area
-            if abs(cross_section_x) <= bund_outer_width/2:
-                if abs(x) <= bund_outer_length/2:
-                    # Calculate bund height based on position
-                    dist_from_center_x = abs(cross_section_x)
-                    dist_from_center_y = abs(x)
-                    
-                    # Distance from inner boundary
-                    dist_from_inner_x = max(0, dist_from_center_x - bund_inner_width/2)
-                    dist_from_inner_y = max(0, dist_from_center_y - bund_inner_length/2)
-                    
-                    # Calculate height based on slopes
-                    if dist_from_inner_x > 0 and dist_from_inner_y > 0:
-                        # Corner area - use diagonal distance
-                        corner_dist = math.sqrt(dist_from_inner_x**2 + dist_from_inner_y**2)
-                        height = min(bund_height, corner_dist / external_slope)
-                    elif dist_from_inner_x > 0:
-                        # Side area
-                        height = min(bund_height, dist_from_inner_x / external_slope)
-                    elif dist_from_inner_y > 0:
-                        # End area
-                        height = min(bund_height, dist_from_inner_y / external_slope)
+            x_pos = cross_section_pos
+            y_pos = point
+            
+            # Check if within landfill area
+            if abs(y_pos) <= bund_outer_length/2:
+                # Calculate waste height
+                waste_height = 0
+                for level in results['levels']:
+                    if level['Volume'] > 0:
+                        l, w = level['Length'], level['Width']
+                        if abs(x_pos) <= l/2 and abs(y_pos) <= w/2:
+                            waste_height = level['Top_Z']
+                profile.append(waste_height)
+                
+                # Calculate bund height
+                if abs(x_pos) <= bund_outer_width/2:
+                    if abs(y_pos) <= bund_outer_length/2:
+                        # Inside bund area
+                        dist_from_inner_x = max(0, abs(x_pos) - bund_inner_width/2)
+                        dist_from_inner_y = max(0, abs(y_pos) - bund_inner_length/2)
+                        
+                        if dist_from_inner_x > 0 or dist_from_inner_y > 0:
+                            # Outside inner boundary - calculate bund height
+                            if dist_from_inner_x > 0 and dist_from_inner_y > 0:
+                                # Corner area
+                                corner_dist = math.sqrt(dist_from_inner_x**2 + dist_from_inner_y**2)
+                                bund_h = min(bund_height, corner_dist / external_slope)
+                            elif dist_from_inner_x > 0:
+                                # Side area
+                                bund_h = min(bund_height, dist_from_inner_x / external_slope)
+                            else:
+                                # End area
+                                bund_h = min(bund_height, dist_from_inner_y / external_slope)
+                        else:
+                            bund_h = 0
+                        
+                        bund_profile.append(bund_h)
                     else:
-                        # Inside inner boundary
-                        height = 0
-                    
-                    bund_profile.append(height)
+                        bund_profile.append(0)
                 else:
                     bund_profile.append(0)
             else:
+                profile.append(0)
                 bund_profile.append(0)
         else:
             # Horizontal cross-section (along X-axis)
-            # Check if point is within bund area
-            if abs(x) <= bund_outer_length/2:
-                if abs(cross_section_y) <= bund_outer_width/2:
-                    # Calculate bund height based on position
-                    dist_from_center_x = abs(x)
-                    dist_from_center_y = abs(cross_section_y)
-                    
-                    # Distance from inner boundary
-                    dist_from_inner_x = max(0, dist_from_center_x - bund_inner_length/2)
-                    dist_from_inner_y = max(0, dist_from_center_y - bund_inner_width/2)
-                    
-                    # Calculate height based on slopes
-                    if dist_from_inner_x > 0 and dist_from_inner_y > 0:
-                        # Corner area - use diagonal distance
-                        corner_dist = math.sqrt(dist_from_inner_x**2 + dist_from_inner_y**2)
-                        height = min(bund_height, corner_dist / external_slope)
-                    elif dist_from_inner_x > 0:
-                        # Side area
-                        height = min(bund_height, dist_from_inner_x / external_slope)
-                    elif dist_from_inner_y > 0:
-                        # End area
-                        height = min(bund_height, dist_from_inner_y / external_slope)
+            x_pos = point
+            y_pos = cross_section_pos
+            
+            # Check if within landfill area
+            if abs(x_pos) <= bund_outer_length/2:
+                # Calculate waste height
+                waste_height = 0
+                for level in results['levels']:
+                    if level['Volume'] > 0:
+                        l, w = level['Length'], level['Width']
+                        if abs(x_pos) <= l/2 and abs(y_pos) <= w/2:
+                            waste_height = level['Top_Z']
+                profile.append(waste_height)
+                
+                # Calculate bund height
+                if abs(y_pos) <= bund_outer_width/2:
+                    if abs(x_pos) <= bund_outer_length/2:
+                        # Inside bund area
+                        dist_from_inner_x = max(0, abs(x_pos) - bund_inner_length/2)
+                        dist_from_inner_y = max(0, abs(y_pos) - bund_inner_width/2)
+                        
+                        if dist_from_inner_x > 0 or dist_from_inner_y > 0:
+                            # Outside inner boundary - calculate bund height
+                            if dist_from_inner_x > 0 and dist_from_inner_y > 0:
+                                # Corner area
+                                corner_dist = math.sqrt(dist_from_inner_x**2 + dist_from_inner_y**2)
+                                bund_h = min(bund_height, corner_dist / external_slope)
+                            elif dist_from_inner_x > 0:
+                                # Side area
+                                bund_h = min(bund_height, dist_from_inner_x / external_slope)
+                            else:
+                                # End area
+                                bund_h = min(bund_height, dist_from_inner_y / external_slope)
+                        else:
+                            bund_h = 0
+                        
+                        bund_profile.append(bund_h)
                     else:
-                        # Inside inner boundary
-                        height = 0
-                    
-                    bund_profile.append(height)
+                        bund_profile.append(0)
                 else:
                     bund_profile.append(0)
             else:
+                profile.append(0)
                 bund_profile.append(0)
     
-    return bund_profile
+    return profile, bund_profile
 
 with tab3:
     st.header("Interactive 3D/2D Visualization")
@@ -570,20 +597,9 @@ with tab3:
             
             # Generate detailed cross-section profile
             y_points = np.linspace(-length/2, length/2, 200)
-            z_points = []
             
-            for y in y_points:
-                # Calculate waste height at this position
-                z = 0
-                for level in results['levels']:
-                    if level['Volume'] > 0:
-                        l, w = level['Length'], level['Width']
-                        if abs(cross_section_x) <= l/2 and abs(y) <= w/2:
-                            z = level['Top_Z']
-                z_points.append(z)
-            
-            # Create proper bund profile
-            bund_profile = create_proper_bund_profile(y_points, cross_section_x, cross_section_y, is_vertical=True)
+            # Create realistic profiles
+            waste_profile, bund_profile = create_realistic_cross_section_profile(y_points, cross_section_x, cross_section_y, is_vertical=True)
             
             # Add ground level
             fig_2d.add_trace(go.Scatter(
@@ -594,7 +610,7 @@ with tab3:
                 hoverinfo='skip'
             ))
             
-            # Add bund profile with proper slopes
+            # Add bund profile with proper structure
             fig_2d.add_trace(go.Scatter(
                 x=y_points, y=bund_profile,
                 mode='lines',
@@ -605,7 +621,7 @@ with tab3:
             
             # Add waste profile
             fig_2d.add_trace(go.Scatter(
-                x=y_points, y=z_points,
+                x=y_points, y=waste_profile,
                 mode='lines',
                 line=dict(color='#654321', width=3),
                 name='Waste Profile',
@@ -613,19 +629,6 @@ with tab3:
                 fillcolor='rgba(101, 67, 33, 0.5)',
                 hovertemplate='Y: %{x:.1f}m<br>Waste Height: %{y:.1f}m<extra></extra>'
             ))
-            
-            # Add level annotations
-            for level in results['levels']:
-                if level['Volume'] > 0:
-                    l, w = level['Length'], level['Width']
-                    if abs(cross_section_x) <= l/2:
-                        fig_2d.add_hline(
-                            y=level['Top_Z'], 
-                            line_dash="dot", 
-                            line_color="gray",
-                            annotation_text=level['Level'],
-                            annotation_position="top right"
-                        )
             
             fig_2d.update_layout(
                 title="Vertical Cross-Section with Proper Bund Structure",
@@ -641,20 +644,9 @@ with tab3:
             
             # Generate detailed cross-section profile
             x_points = np.linspace(-width/2, width/2, 200)
-            z_points = []
             
-            for x in x_points:
-                # Calculate waste height at this position
-                z = 0
-                for level in results['levels']:
-                    if level['Volume'] > 0:
-                        l, w = level['Length'], level['Width']
-                        if abs(x) <= l/2 and abs(cross_section_y) <= w/2:
-                            z = level['Top_Z']
-                z_points.append(z)
-            
-            # Create proper bund profile
-            bund_profile = create_proper_bund_profile(x_points, cross_section_x, cross_section_y, is_vertical=False)
+            # Create realistic profiles
+            waste_profile, bund_profile = create_realistic_cross_section_profile(x_points, cross_section_x, cross_section_y, is_vertical=False)
             
             # Add ground level
             fig_2d.add_trace(go.Scatter(
@@ -665,7 +657,7 @@ with tab3:
                 hoverinfo='skip'
             ))
             
-            # Add bund profile with proper slopes
+            # Add bund profile with proper structure
             fig_2d.add_trace(go.Scatter(
                 x=x_points, y=bund_profile,
                 mode='lines',
@@ -676,7 +668,7 @@ with tab3:
             
             # Add waste profile
             fig_2d.add_trace(go.Scatter(
-                x=x_points, y=z_points,
+                x=x_points, y=waste_profile,
                 mode='lines',
                 line=dict(color='#654321', width=3),
                 name='Waste Profile',
@@ -684,19 +676,6 @@ with tab3:
                 fillcolor='rgba(101, 67, 33, 0.5)',
                 hovertemplate='X: %{x:.1f}m<br>Waste Height: %{y:.1f}m<extra></extra>'
             ))
-            
-            # Add level annotations
-            for level in results['levels']:
-                if level['Volume'] > 0:
-                    l, w = level['Length'], level['Width']
-                    if abs(cross_section_y) <= w/2:
-                        fig_2d.add_hline(
-                            y=level['Top_Z'], 
-                            line_dash="dot", 
-                            line_color="gray",
-                            annotation_text=level['Level'],
-                            annotation_position="top right"
-                        )
             
             fig_2d.update_layout(
                 title="Horizontal Cross-Section with Proper Bund Structure",
