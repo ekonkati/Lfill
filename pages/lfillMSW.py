@@ -29,17 +29,17 @@ st.markdown("""
         border-radius: 0.5rem;
         border-left: 4px solid #3498db;
     }
+    .plot-container {
+        border: 1px solid #e0e0e0;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<h1 class="main-header">🏗️ Landfill Construction Simulator</h1>', unsafe_allow_html=True)
 st.markdown("A comprehensive tool for landfill design, volume calculation, and interactive visualization")
-
-# Initialize session state for storing click data
-if 'click_x' not in st.session_state:
-    st.session_state.click_x = 0
-if 'click_y' not in st.session_state:
-    st.session_state.click_y = 0
 
 # Display results in tabs
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📋 Input Parameters", "📊 Results Summary", "🎯 Interactive Visualization", "📐 Detailed Calculations", "💰 Cost Analysis", "📈 Reports"])
@@ -282,11 +282,34 @@ with tab2:
 with tab3:
     st.header("Interactive 3D/2D Visualization")
     
+    # Cross-section controls
+    st.markdown('<h3 class="section-header">Cross-Section Controls</h3>', unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col1:
+        st.write("**Select Position:**")
+        cross_section_type = st.radio("Cross-Section Type", ["Vertical (Y-axis)", "Horizontal (X-axis)"])
+        
+    with col2:
+        if cross_section_type == "Vertical (Y-axis)":
+            cross_section_x = st.slider("X Position (m)", -width/2, width/2, 0.0, step=10.0)
+            cross_section_y = 0
+        else:
+            cross_section_y = st.slider("Y Position (m)", -length/2, length/2, 0.0, step=10.0)
+            cross_section_x = 0
+    
+    with col3:
+        st.write("**Current Position:**")
+        st.write(f"X: {cross_section_x:.1f}m")
+        st.write(f"Y: {cross_section_y:.1f}m")
+    
+    # Visualizations
     col1, col2 = st.columns([2, 1])
     
     with col1:
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
         st.subheader("3D Landfill Model")
-        st.info("🖱️ Click on the 3D model to see the cross-section at that location")
         
         # Create 3D surface plot
         fig_3d = go.Figure()
@@ -329,6 +352,38 @@ with tab3:
             )
         )
         
+        # Add cross-section line
+        if cross_section_type == "Vertical (Y-axis)":
+            # Vertical line at X position
+            line_y = np.linspace(-length/2, length/2, 20)
+            line_x = [cross_section_x] * len(line_y)
+            line_z = np.linspace(-depth_below_ngl, results['max_height'], 20)
+            
+            fig_3d.add_trace(
+                go.Scatter3d(
+                    x=line_x, y=line_y, z=line_z,
+                    mode='lines',
+                    line=dict(color='red', width=5),
+                    name='Cross-Section',
+                    hoverinfo='skip'
+                )
+            )
+        else:
+            # Horizontal line at Y position
+            line_x = np.linspace(-width/2, width/2, 20)
+            line_y = [cross_section_y] * len(line_x)
+            line_z = np.linspace(-depth_below_ngl, results['max_height'], 20)
+            
+            fig_3d.add_trace(
+                go.Scatter3d(
+                    x=line_x, y=line_y, z=line_z,
+                    mode='lines',
+                    line=dict(color='red', width=5),
+                    name='Cross-Section',
+                    hoverinfo='skip'
+                )
+            )
+        
         # Add wireframe for levels
         for level in results['levels']:
             if level['Volume'] > 0:
@@ -365,24 +420,10 @@ with tab3:
                         hoverinfo='skip'
                     )
                 )
-                
-                # Vertical edges
-                for i in range(4):
-                    fig_3d.add_trace(
-                        go.Scatter3d(
-                            x=[bottom_x[i], top_x[i]],
-                            y=[bottom_y[i], top_y[i]],
-                            z=[bottom_z[i], top_z[i]],
-                            mode='lines',
-                            line=dict(color='black', width=1),
-                            showlegend=False,
-                            hoverinfo='skip'
-                        )
-                    )
         
         # Update layout
         fig_3d.update_layout(
-            title="3D Landfill Model",
+            title="3D Landfill Model with Cross-Section",
             scene=dict(
                 xaxis_title="Length (m)",
                 yaxis_title="Width (m)",
@@ -391,35 +432,21 @@ with tab3:
                 aspectmode='manual',
                 aspectratio=dict(x=1, y=1, z=0.3)  # Keep height scale realistic
             ),
-            height=600,
-            clickmode='event+select'
+            height=600
         )
         
         # Display 3D plot
-        event = st.plotly_chart(fig_3d, use_container_width=True, key="3d_plot")
-        
-        # Handle click events
-        if event and 'clicks' in event:
-            if event['clicks']:
-                click_data = event['clicks'][0]
-                st.session_state.click_x = click_data['x']
-                st.session_state.click_y = click_data['y']
-                st.rerun()
+        st.plotly_chart(fig_3d, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
         st.subheader("Cross-Section View")
         
-        # Get click position
-        cross_section_x = st.session_state.click_x
-        cross_section_y = st.session_state.click_y
-        
-        st.write(f"Cross-section at: X={cross_section_x:.1f}m, Y={cross_section_y:.1f}m")
-        
-        # Create 2D cross-section based on click position
+        # Create 2D cross-section
         fig_2d = go.Figure()
         
-        # Determine cross-section orientation based on click position
-        if abs(cross_section_x) > abs(cross_section_y):
+        if cross_section_type == "Vertical (Y-axis)":
             # Vertical cross-section (along Y-axis)
             st.write("📐 Vertical Cross-Section (Along Y-axis)")
             
@@ -455,6 +482,19 @@ with tab3:
                 fillcolor='rgba(139, 69, 19, 0.3)',
                 hovertemplate='Y: %{x:.1f}m<br>Height: %{y:.1f}m<extra></extra>'
             ))
+            
+            # Add level lines
+            for level in results['levels']:
+                if level['Volume'] > 0:
+                    l, w = level['Length'], level['Width']
+                    if abs(cross_section_x) <= l/2:
+                        fig_2d.add_hline(
+                            y=level['Top_Z'], 
+                            line_dash="dot", 
+                            line_color="gray",
+                            annotation_text=level['Level'],
+                            annotation_position="top right"
+                        )
             
             fig_2d.update_layout(
                 title="Vertical Cross-Section",
@@ -501,6 +541,19 @@ with tab3:
                 hovertemplate='X: %{x:.1f}m<br>Height: %{y:.1f}m<extra></extra>'
             ))
             
+            # Add level lines
+            for level in results['levels']:
+                if level['Volume'] > 0:
+                    l, w = level['Length'], level['Width']
+                    if abs(cross_section_y) <= w/2:
+                        fig_2d.add_hline(
+                            y=level['Top_Z'], 
+                            line_dash="dot", 
+                            line_color="gray",
+                            annotation_text=level['Level'],
+                            annotation_position="top right"
+                        )
+            
             fig_2d.update_layout(
                 title="Horizontal Cross-Section",
                 xaxis_title="Distance along X-axis (m)",
@@ -511,6 +564,7 @@ with tab3:
         
         # Display 2D cross-section
         st.plotly_chart(fig_2d, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # Add level information
         st.subheader("Level Information at Cross-Section")
@@ -738,7 +792,7 @@ st.info("""
 - Environmental regulations and local conditions should be factored in
 - Regular monitoring and maintenance are essential for landfill operations
 - The 3D visualization is a simplified representation for conceptual understanding
-- Cross-sections are generated dynamically based on click position
+- Cross-sections are generated dynamically based on slider position
 """)
 
 st.markdown("""
