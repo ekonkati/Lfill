@@ -176,7 +176,11 @@ def calculate_landfill_parameters():
         'per_ton_cost': per_ton_cost,
         'leachate_tpa': leachate_tpa,
         'leachate_kld': leachate_kld,
-        'tpa': tpa
+        'tpa': tpa,
+        'bbl_length': bbl_length,
+        'bbl_width': bbl_width_calc,
+        'bl_length': bl_length,
+        'bl_width': bl_width
     }
 
 # Calculate parameters
@@ -232,6 +236,12 @@ with tab2:
     # Draw landfill profile
     x_points = []
     y_points = []
+    
+    # Get dimensions from results
+    bbl_length = results['bbl_length']
+    bbl_width = results['bbl_width']
+    bl_length = results['bl_length']
+    bl_width = results['bl_width']
     
     # Calculate total width for proper scaling
     total_width = width + 2 * (bund_height * external_slope + bund_width + waste_height * waste_slope * 5)
@@ -554,9 +564,9 @@ with tab4:
             'Component': ['Excavation Below Ground', 'Waste up to Bund', 'Waste above Bund', 'Total'],
             'Volume (Cum)': [excavation_volume, waste_up_to_bund, waste_above_bund, results['total_volume']],
             'Percentage': [
-                f"{excavation_volume/results['total_volume']*100:.1f}%",
-                f"{waste_up_to_bund/results['total_volume']*100:.1f}%",
-                f"{waste_above_bund/results['total_volume']*100:.1f}%",
+                f"{excavation_volume/results['total_volume']*100:.1f}%" if results['total_volume'] > 0 else "0%",
+                f"{waste_up_to_bund/results['total_volume']*100:.1f}%" if results['total_volume'] > 0 else "0%",
+                f"{waste_above_bund/results['total_volume']*100:.1f}%" if results['total_volume'] > 0 else "0%",
                 "100%"
             ]
         }
@@ -592,7 +602,7 @@ with tab5:
                 f"₹{results['per_ton_cost']:.2f}",
                 f"₹{results['per_ton_cost']/density:.2f}",
                 f"₹{cost_per_sqm:.2f}",
-                f"₹{total_cost_calculated/results['landfill_life']:.2f}"
+                f"₹{total_cost_calculated/results['landfill_life']:.2f}" if results['landfill_life'] > 0 else "N/A"
             ]
         }
         st.dataframe(pd.DataFrame(unit_costs), use_container_width=True)
