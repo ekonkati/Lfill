@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Rectangle, Polygon
 from matplotlib.colors import LinearSegmentedColormap
 import math
 
@@ -45,13 +45,6 @@ cost_per_sqm = st.sidebar.number_input("Cost per Sqm (INR)", value=3850.0, min_v
 st.sidebar.subheader("Leachate Parameters")
 leachate_percentage = st.sidebar.slider("Leachate Percentage (%)", min_value=5, max_value=50, value=20)
 
-# Create custom brown colormap
-def create_brown_colormap():
-    colors = ['#8B4513', '#A0522D', '#CD853F', '#DEB887', '#F4A460']  # Different shades of brown
-    n_bins = 100
-    cmap = LinearSegmentedColormap.from_list('brown_custom', colors, N=n_bins)
-    return cmap
-
 # Calculate all values
 def calculate_landfill_parameters():
     # Basic calculations
@@ -59,13 +52,12 @@ def calculate_landfill_parameters():
     total_quantity = tpa * duration
     landfill_area_sqm = landfill_area_acres * 4047
     
-    # Base width calculation
-    base_width = bund_width + (bund_height * external_slope) + (bund_height * internal_slope)
-    
     # Calculate levels and volumes
     levels_data = []
     
-    # Below Ground Level (BGL)
+    # 1. Below Ground Level (BBL) - Excavation below ground
+    # According to Excel: BBL length = (B9-((B20+(B24*B15)+B22+1)*2))
+    # Where B9 = width, B20 = drain width, B24 = depth below NGL, B15 = internal slope, B22 = drain depth
     drain_width = 1.0
     drain_depth = 1.0
     
@@ -79,20 +71,23 @@ def calculate_landfill_parameters():
     bbl_area = bbl_length * bbl_width_calc
     bbl_volume = bbl_area * depth_below_ngl
     
-    # Base Level (BL)
-    bl_length = bbl_length + (((bund_height + depth_below_ngl) * internal_slope) * 2)
-    bl_width = bbl_width_calc + (((bund_height + depth_below_ngl) * internal_slope) * 2)
-    bl_area = bl_length * bl_width
-    bl_volume = ((bbl_area + bl_area) / 2) * bund_height
-    
     levels_data.append({
         'Level': 'BBL',
         'Length': bbl_length,
         'Width': bbl_width_calc,
         'Area': bbl_area,
         'Height': depth_below_ngl,
-        'Volume': bbl_volume
+        'Volume': bbl_volume,
+        'Type': 'Excavation'
     })
+    
+    # 2. Base Level (BL) - Waste filling up to top of bund
+    # According to Excel: BL length = (B27+(((B12+B24)*B15)*2))
+    # Where B27 = BBL length, B12 = bund height, B24 = depth below NGL, B15 = internal slope
+    bl_length = bbl_length + (((bund_height + depth_below_ngl) * internal_slope) * 2)
+    bl_width = bbl_width_calc + (((bund_height + depth_below_ngl) * internal_slope) * 2)
+    bl_area = bl_length * bl_width
+    bl_volume = ((bbl_area + bl_area) / 2) * bund_height
     
     levels_data.append({
         'Level': 'BL',
@@ -100,16 +95,19 @@ def calculate_landfill_parameters():
         'Width': bl_width,
         'Area': bl_area,
         'Height': bund_height,
-        'Volume': bl_volume
+        'Volume': bl_volume,
+        'Type': 'Waste up to Bund'
     })
     
-    # Above Bund Levels (ABL)
+    # 3. Above Bund Levels (ABL) - Waste filling from top of bund to crest with berms
     current_length = bl_length
     current_width = bl_width
     total_volume = bbl_volume + bl_volume
     
     for i in range(1, 10):  # Calculate up to 9 levels
-        # ABL level
+        # ABL level - waste filling
+        # According to Excel: ABL length = (B28-(5*$B$17)*2)
+        # Where B28 = previous level length, B17 = waste slope
         abl_length = current_length - (waste_height * waste_slope * 2)
         abl_width_calc = current_width - (waste_height * waste_slope * 2)
         
@@ -127,10 +125,13 @@ def calculate_landfill_parameters():
             'Width': abl_width_calc,
             'Area': abl_area,
             'Height': waste_height,
-            'Volume': abl_volume
+            'Volume': abl_volume,
+            'Type': 'Waste above Bund'
         })
         
         # Berm level
+        # According to Excel: ABL i Berm length = (B32-4*2)
+        # Where B32 = ABL length, 4 = berm width
         berm_length = abl_length - (berm_width * 2)
         berm_width_calc = abl_width_calc - (berm_width * 2)
         
@@ -145,7 +146,8 @@ def calculate_landfill_parameters():
             'Width': berm_width_calc,
             'Area': berm_area,
             'Height': 0.0,
-            'Volume': 0.0
+            'Volume': 0.0,
+            'Type': 'Berm'
         })
         
         current_length = berm_length
@@ -231,11 +233,32 @@ with tab2:
     x_points = []
     y_points = []
     
-    # Start from left
+    # Calculate total width for proper scaling
+    total_width = width + 2 * (bund_height * external_slope + bund_width + waste_height * waste_slope * 5)
+    
+    # Start from leftmost point
     current_x = 0
     current_y = -depth_below_ngl
     
-    # Left external slope
+    # 1. Left side of excavation below ground
+    # From left edge to bottom of excavation
+    x_points.extend([current_x, current_x + depth_below_ngl * internal_slope])
+    y_points.extend([current_y, current_y + depth_below_ngl])
+    
+    # Bottom of excavation
+    current_x += depth_below_ngl * internal_slope
+    current_y += depth_below_ngl
+    x_points.extend([current_x, current_x + bbl_length])
+    y_points.extend([current_y, current_y])
+    
+    # Right side of excavation
+    current_x += bbl_length
+    x_points.extend([current_x, current_x + depth_below_ngl * internal_slope])
+    y_points.extend([current_y, current_y - depth_below_ngl])
+    
+    # Ground level
+    current_x += depth_below_ngl * internal_slope
+    current_y -= depth_below_ngl
     x_points.extend([current_x, current_x + bund_height * external_slope])
     y_points.extend([current_y, current_y + bund_height])
     
@@ -245,12 +268,12 @@ with tab2:
     x_points.extend([current_x, current_x + bund_width])
     y_points.extend([current_y, current_y])
     
-    # Internal slope to base
+    # Internal slope to waste
     current_x += bund_width
     x_points.extend([current_x, current_x + bund_height * internal_slope])
     y_points.extend([current_y, current_y - bund_height])
     
-    # Waste layers
+    # Waste layers above bund
     current_x += bund_height * internal_slope
     current_y -= bund_height
     
@@ -268,7 +291,7 @@ with tab2:
             y_points.extend([current_y, current_y])
             current_x += berm_width
     
-    # Right side (simplified)
+    # Right side (mirror of left side)
     right_x = current_x
     right_y = current_y
     
@@ -300,6 +323,16 @@ with tab2:
     max_x = max(x_points)
     ax1.plot([0, max_x], [0, 0], 'g--', linewidth=1, label='Ground Level')
     
+    # Add bund top line
+    bund_left_x = depth_below_ngl * internal_slope + bbl_length + depth_below_ngl * internal_slope + bund_height * external_slope
+    bund_right_x = bund_left_x + bund_width
+    ax1.plot([bund_left_x, bund_right_x], [bund_height, bund_height], 'b-', linewidth=2, label='Bund Top')
+    
+    # Add labels for different sections
+    ax1.text(bbl_length/2, -depth_below_ngl/2, "Excavation\nBelow Ground", ha='center', va='center')
+    ax1.text(bund_left_x + bund_width/2, bund_height/2, "Bund", ha='center', va='center')
+    
+    # Add legend
     ax1.legend()
     ax1.set_aspect('equal', adjustable='box')
     
@@ -440,6 +473,18 @@ with tab3:
                 )
             )
     
+    # Add ground level plane
+    xx, yy = np.meshgrid(np.linspace(-width/2, width/2, 10), np.linspace(-length/2, length/2, 10))
+    zz = np.zeros_like(xx)
+    fig.add_trace(
+        go.Surface(
+            x=xx, y=yy, z=zz,
+            colorscale=[[0, 'green'], [1, 'green']],
+            showscale=False,
+            opacity=0.2
+        )
+    )
+    
     fig.update_layout(
         title="3D Landfill Visualization",
         scene=dict(
@@ -498,6 +543,24 @@ with tab4:
                                f"{math.degrees(math.atan(1/waste_slope)):.1f}°"]
         }
         st.dataframe(pd.DataFrame(slope_data), use_container_width=True)
+        
+        # Volume breakdown by type
+        st.subheader("Volume Breakdown by Type")
+        excavation_volume = sum(l['Volume'] for l in results['levels'] if l['Type'] == 'Excavation')
+        waste_up_to_bund = sum(l['Volume'] for l in results['levels'] if l['Type'] == 'Waste up to Bund')
+        waste_above_bund = sum(l['Volume'] for l in results['levels'] if l['Type'] == 'Waste above Bund')
+        
+        volume_breakdown = {
+            'Component': ['Excavation Below Ground', 'Waste up to Bund', 'Waste above Bund', 'Total'],
+            'Volume (Cum)': [excavation_volume, waste_up_to_bund, waste_above_bund, results['total_volume']],
+            'Percentage': [
+                f"{excavation_volume/results['total_volume']*100:.1f}%",
+                f"{waste_up_to_bund/results['total_volume']*100:.1f}%",
+                f"{waste_above_bund/results['total_volume']*100:.1f}%",
+                "100%"
+            ]
+        }
+        st.dataframe(pd.DataFrame(volume_breakdown), use_container_width=True)
 
 with tab5:
     st.header("Cost Analysis")
