@@ -5,7 +5,8 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon
+from matplotlib.patches import Rectangle
+from matplotlib.colors import LinearSegmentedColormap
 import math
 
 st.set_page_config(page_title="Landfill Construction Simulator", layout="wide")
@@ -43,6 +44,13 @@ cost_per_sqm = st.sidebar.number_input("Cost per Sqm (INR)", value=3850.0, min_v
 # Leachate Parameters
 st.sidebar.subheader("Leachate Parameters")
 leachate_percentage = st.sidebar.slider("Leachate Percentage (%)", min_value=5, max_value=50, value=20)
+
+# Create custom brown colormap
+def create_brown_colormap():
+    colors = ['#8B4513', '#A0522D', '#CD853F', '#DEB887', '#F4A460']  # Different shades of brown
+    n_bins = 100
+    cmap = LinearSegmentedColormap.from_list('brown_custom', colors, N=n_bins)
+    return cmap
 
 # Calculate all values
 def calculate_landfill_parameters():
@@ -285,7 +293,7 @@ with tab2:
     y_points.append(y_points[0])
     
     # Fill and plot
-    ax1.fill(x_points, y_points, color='brown', alpha=0.6, label='Waste Fill')
+    ax1.fill(x_points, y_points, color='#8B4513', alpha=0.6, label='Waste Fill')
     ax1.plot(x_points, y_points, 'k-', linewidth=2)
     
     # Add ground level line
@@ -301,15 +309,17 @@ with tab2:
     ax2.set_ylabel("Width (m)")
     ax2.grid(True, alpha=0.3)
     
-    # Draw concentric rectangles for each level
-    colors = plt.cm.Brown(np.linspace(0.3, 0.9, len(results['levels'])))
+    # Create custom brown colors
+    brown_colors = ['#8B4513', '#A0522D', '#CD853F', '#DEB887', '#F4A460', '#D2691E', '#BC8F8F']
     
+    # Draw concentric rectangles for each level
     for i, level in enumerate(results['levels']):
         if level['Volume'] > 0:
-            rect = plt.Rectangle(
+            color = brown_colors[i % len(brown_colors)]
+            rect = Rectangle(
                 (width/2 - level['Length']/2, length/2 - level['Width']/2),
                 level['Length'], level['Width'],
-                fill=False, edgecolor=colors[i], linewidth=2,
+                fill=False, edgecolor=color, linewidth=2,
                 label=level['Level']
             )
             ax2.add_patch(rect)
@@ -379,7 +389,7 @@ with tab3:
     fig.add_trace(
         go.Surface(
             x=X, y=Y, z=Z,
-            colorscale='Earth',
+            colorscale=[[0, '#8B4513'], [0.5, '#A0522D'], [1, '#CD853F']],
             showscale=True,
             colorbar=dict(title="Height (m)")
         )
