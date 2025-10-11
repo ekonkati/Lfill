@@ -311,31 +311,67 @@ with tab3:
         st.markdown('<div class="plot-container">', unsafe_allow_html=True)
         st.subheader("3D Landfill Model")
         
-        # Create 3D surface plot
+        # Create 3D surface plot with proper bund modeling
         fig_3d = go.Figure()
         
         # Create height map for 3D surface
-        x = np.linspace(-width/2, width/2, 50)
-        y = np.linspace(-length/2, length/2, 50)
+        x = np.linspace(-width/2, width/2, 80)
+        y = np.linspace(-length/2, length/2, 80)
         X, Y = np.meshgrid(x, y)
         
-        # Create height map
+        # Create height map with proper bund modeling
         Z = np.zeros_like(X)
         
-        for level in results['levels']:
-            if level['Volume'] > 0:
-                l, w = level['Length'], level['Width']
-                mask = (np.abs(X) <= l/2) & (np.abs(Y) <= w/2)
-                Z[mask] = level['Top_Z']
+        # Calculate bund dimensions
+        bund_outer_length = results['bl_length'] + 2 * (bund_height * external_slope)
+        bund_outer_width = results['bl_width'] + 2 * (bund_height * external_slope)
+        bund_inner_length = results['bl_length']
+        bund_inner_width = results['bl_width']
         
-        # Add surface
+        # Model the complete landfill structure
+        for i in range(len(X)):
+            for j in range(len(X[0])):
+                x_pos, y_pos = X[i, j], Y[i, j]
+                
+                # Check if point is in bund area
+                if (abs(x_pos) <= bund_outer_length/2 and abs(y_pos) <= bund_outer_width/2):
+                    # Inside outer bund boundary
+                    
+                    # Check if point is in waste area
+                    if (abs(x_pos) <= bund_inner_length/2 and abs(y_pos) <= bund_inner_width/2):
+                        # Inside waste area - calculate waste height
+                        for level in results['levels']:
+                            if level['Volume'] > 0:
+                                l, w = level['Length'], level['Width']
+                                if abs(x_pos) <= l/2 and abs(y_pos) <= w/2:
+                                    Z[i, j] = level['Top_Z']
+                    else:
+                        # In bund area - calculate bund height with proper slopes
+                        # Distance from center
+                        dist_x = abs(x_pos)
+                        dist_y = abs(y_pos)
+                        
+                        # Calculate distance to inner boundary
+                        dist_to_inner_x = max(0, dist_x - bund_inner_length/2)
+                        dist_to_inner_y = max(0, dist_y - bund_inner_width/2)
+                        
+                        # Calculate height based on slope
+                        height_from_x = dist_to_inner_x / external_slope
+                        height_from_y = dist_to_inner_y / external_slope
+                        height_from_corner = max(dist_to_inner_x, dist_to_inner_y) / external_slope
+                        
+                        # Use the maximum height from any direction
+                        Z[i, j] = min(bund_height, height_from_corner)
+        
+        # Add waste surface
         fig_3d.add_trace(
             go.Surface(
                 x=X, y=Y, z=Z,
                 colorscale=[[0, '#8B4513'], [0.3, '#A0522D'], [0.6, '#CD853F'], [1, '#DEB887']],
                 showscale=True,
                 colorbar=dict(title="Height (m)"),
-                hovertemplate='X: %{x:.1f}m<br>Y: %{y:.1f}m<br>Z: %{z:.1f}m<extra></extra>'
+                hovertemplate='X: %{x:.1f}m<br>Y: %{y:.1f}m<br>Z: %{z:.1f}m<extra></extra>',
+                name='Landfill'
             )
         )
         
@@ -348,7 +384,8 @@ with tab3:
                 colorscale=[[0, 'green'], [1, 'green']],
                 showscale=False,
                 opacity=0.3,
-                hoverinfo='skip'
+                hoverinfo='skip',
+                name='Ground Level'
             )
         )
         
@@ -384,46 +421,9 @@ with tab3:
                 )
             )
         
-        # Add wireframe for levels
-        for level in results['levels']:
-            if level['Volume'] > 0:
-                l, w = level['Length'], level['Width']
-                z_bottom = level['Bottom_Z']
-                z_top = level['Top_Z']
-                
-                # Bottom edges
-                bottom_x = [-l/2, l/2, l/2, -l/2, -l/2]
-                bottom_y = [-w/2, -w/2, w/2, w/2, -w/2]
-                bottom_z = [z_bottom] * 5
-                
-                fig_3d.add_trace(
-                    go.Scatter3d(
-                        x=bottom_x, y=bottom_y, z=bottom_z,
-                        mode='lines',
-                        line=dict(color='black', width=2),
-                        showlegend=False,
-                        hoverinfo='skip'
-                    )
-                )
-                
-                # Top edges
-                top_x = [-l/2, l/2, l/2, -l/2, -l/2]
-                top_y = [-w/2, -w/2, w/2, w/2, -w/2]
-                top_z = [z_top] * 5
-                
-                fig_3d.add_trace(
-                    go.Scatter3d(
-                        x=top_x, y=top_y, z=top_z,
-                        mode='lines',
-                        line=dict(color='black', width=2),
-                        showlegend=False,
-                        hoverinfo='skip'
-                    )
-                )
-        
         # Update layout
         fig_3d.update_layout(
-            title="3D Landfill Model with Cross-Section",
+            title="3D Landfill Model with Proper Bund Structure",
             scene=dict(
                 xaxis_title="Length (m)",
                 yaxis_title="Width (m)",
@@ -432,7 +432,8 @@ with tab3:
                 aspectmode='manual',
                 aspectratio=dict(x=1, y=1, z=0.3)  # Keep height scale realistic
             ),
-            height=600
+            height=600,
+            showlegend=True
         )
         
         # Display 3D plot
@@ -443,18 +444,20 @@ with tab3:
         st.markdown('<div class="plot-container">', unsafe_allow_html=True)
         st.subheader("Cross-Section View")
         
-        # Create 2D cross-section
+        # Create 2D cross-section with proper bund modeling
         fig_2d = go.Figure()
         
         if cross_section_type == "Vertical (Y-axis)":
             # Vertical cross-section (along Y-axis)
             st.write("📐 Vertical Cross-Section (Along Y-axis)")
             
-            # Generate cross-section profile
-            y_points = np.linspace(-length/2, length/2, 100)
+            # Generate detailed cross-section profile
+            y_points = np.linspace(-length/2, length/2, 200)
             z_points = []
+            bund_points = []
             
             for y in y_points:
+                # Calculate waste height at this position
                 z = 0
                 for level in results['levels']:
                     if level['Volume'] > 0:
@@ -462,6 +465,20 @@ with tab3:
                         if abs(cross_section_x) <= l/2 and abs(y) <= w/2:
                             z = level['Top_Z']
                 z_points.append(z)
+                
+                # Calculate bund height at this position
+                if abs(cross_section_x) <= bund_outer_width/2 and abs(y) <= bund_outer_width/2:
+                    if abs(cross_section_x) > bund_inner_width/2 or abs(y) > bund_inner_width/2:
+                        # In bund area
+                        dist_x = max(0, abs(cross_section_x) - bund_inner_width/2)
+                        dist_y = max(0, abs(y) - bund_inner_width/2)
+                        height_from_corner = max(dist_x, dist_y) / external_slope
+                        bund_height_at_point = min(bund_height, height_from_corner)
+                        bund_points.append(bund_height_at_point)
+                    else:
+                        bund_points.append(0)
+                else:
+                    bund_points.append(0)
             
             # Add ground level
             fig_2d.add_trace(go.Scatter(
@@ -472,18 +489,27 @@ with tab3:
                 hoverinfo='skip'
             ))
             
-            # Add cross-section profile
+            # Add bund profile
+            fig_2d.add_trace(go.Scatter(
+                x=y_points, y=bund_points,
+                mode='lines',
+                line=dict(color='#8B4513', width=2),
+                name='Bund Profile',
+                hoverinfo='skip'
+            ))
+            
+            # Add waste profile
             fig_2d.add_trace(go.Scatter(
                 x=y_points, y=z_points,
                 mode='lines',
-                line=dict(color='#8B4513', width=3),
-                name='Landfill Profile',
+                line=dict(color='#654321', width=3),
+                name='Waste Profile',
                 fill='tonexty',
-                fillcolor='rgba(139, 69, 19, 0.3)',
+                fillcolor='rgba(101, 67, 33, 0.5)',
                 hovertemplate='Y: %{x:.1f}m<br>Height: %{y:.1f}m<extra></extra>'
             ))
             
-            # Add level lines
+            # Add level annotations
             for level in results['levels']:
                 if level['Volume'] > 0:
                     l, w = level['Length'], level['Width']
@@ -497,7 +523,7 @@ with tab3:
                         )
             
             fig_2d.update_layout(
-                title="Vertical Cross-Section",
+                title="Vertical Cross-Section with Bund Structure",
                 xaxis_title="Distance along Y-axis (m)",
                 yaxis_title="Height (m)",
                 height=400,
@@ -508,11 +534,13 @@ with tab3:
             # Horizontal cross-section (along X-axis)
             st.write("📐 Horizontal Cross-Section (Along X-axis)")
             
-            # Generate cross-section profile
-            x_points = np.linspace(-width/2, width/2, 100)
+            # Generate detailed cross-section profile
+            x_points = np.linspace(-width/2, width/2, 200)
             z_points = []
+            bund_points = []
             
             for x in x_points:
+                # Calculate waste height at this position
                 z = 0
                 for level in results['levels']:
                     if level['Volume'] > 0:
@@ -520,6 +548,20 @@ with tab3:
                         if abs(x) <= l/2 and abs(cross_section_y) <= w/2:
                             z = level['Top_Z']
                 z_points.append(z)
+                
+                # Calculate bund height at this position
+                if abs(x) <= bund_outer_length/2 and abs(cross_section_y) <= bund_outer_width/2:
+                    if abs(x) > bund_inner_length/2 or abs(cross_section_y) > bund_inner_width/2:
+                        # In bund area
+                        dist_x = max(0, abs(x) - bund_inner_length/2)
+                        dist_y = max(0, abs(cross_section_y) - bund_inner_width/2)
+                        height_from_corner = max(dist_x, dist_y) / external_slope
+                        bund_height_at_point = min(bund_height, height_from_corner)
+                        bund_points.append(bund_height_at_point)
+                    else:
+                        bund_points.append(0)
+                else:
+                    bund_points.append(0)
             
             # Add ground level
             fig_2d.add_trace(go.Scatter(
@@ -530,18 +572,27 @@ with tab3:
                 hoverinfo='skip'
             ))
             
-            # Add cross-section profile
+            # Add bund profile
+            fig_2d.add_trace(go.Scatter(
+                x=x_points, y=bund_points,
+                mode='lines',
+                line=dict(color='#8B4513', width=2),
+                name='Bund Profile',
+                hoverinfo='skip'
+            ))
+            
+            # Add waste profile
             fig_2d.add_trace(go.Scatter(
                 x=x_points, y=z_points,
                 mode='lines',
-                line=dict(color='#8B4513', width=3),
-                name='Landfill Profile',
+                line=dict(color='#654321', width=3),
+                name='Waste Profile',
                 fill='tonexty',
-                fillcolor='rgba(139, 69, 19, 0.3)',
+                fillcolor='rgba(101, 67, 33, 0.5)',
                 hovertemplate='X: %{x:.1f}m<br>Height: %{y:.1f}m<extra></extra>'
             ))
             
-            # Add level lines
+            # Add level annotations
             for level in results['levels']:
                 if level['Volume'] > 0:
                     l, w = level['Length'], level['Width']
@@ -555,7 +606,7 @@ with tab3:
                         )
             
             fig_2d.update_layout(
-                title="Horizontal Cross-Section",
+                title="Horizontal Cross-Section with Bund Structure",
                 xaxis_title="Distance along X-axis (m)",
                 yaxis_title="Height (m)",
                 height=400,
