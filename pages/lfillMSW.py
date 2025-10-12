@@ -453,10 +453,10 @@ with tab3:
     with col2:
         if cross_section_type == "Vertical (Y-axis)":
             cross_section_x = st.slider("X Position (m)", -width/2, width/2, 0.0, step=10.0)
-            cross_section_y = 0
+            cross_section_y = 0.0
         else:
             cross_section_y = st.slider("Y Position (m)", -length/2, length/2, 0.0, step=10.0)
-            cross_section_x = 0
+            cross_section_x = 0.0
     
     with col3:
         st.write("**Current Position:**")
@@ -484,7 +484,7 @@ with tab3:
         # Calculate bund dimensions
         bund_inner_length = results['bl_length']
         bund_inner_width = results['bl_width']
-        bund_outer_length = bund_inner_length + 2 * (bund_height * external_slope)
+        bund_inner_length + 2 * (bund_height * external bund_outer_length =_slope)
         bund_outer_width = bund_inner_width + 2 * (bund_height * external_slope)
         
         # Model the complete landfill structure
@@ -614,7 +614,14 @@ with tab3:
         
         # Only create cross-section if we have the required variables
         try:
-            if cross_section_type == "Vertical (Y-axis)":
+            # Ensure cross_section_x and cross_section_y are single values
+            cs_x = float(cross_section_x) if isinstance(cross_section_x, (int, float, np.number)) else 0.0
+            cs_y = float(cross_section_y) if isinstance(cross_section_y, (int, float, np.number)) else 0.0
+            
+            # Ensure is_vertical is a boolean
+            is_vert = cross_section_type == "Vertical (Y-axis)"
+            
+            if is_vert:
                 # Vertical cross-section (along Y-axis)
                 st.write("📐 Vertical Cross-Section (Along Y-axis)")
                 
@@ -623,8 +630,12 @@ with tab3:
                 
                 # Create realistic profiles with proper parameters
                 waste_profile, bund_profile = create_realistic_cross_section_profile(
-                    y_points, cross_section_x, cross_section_y, is_vertical=True, 
-                    results_data=results, bund_h=bund_height, external_slope_param=external_slope
+                    points=y_points,
+                    cross_section_pos=cs_x,
+                    is_vertical=is_vert,
+                    results_data=results,
+                    bund_h=bund_height,
+                    external_slope_param=external_slope
                 )
                 
                 # Add ground level
@@ -673,8 +684,12 @@ with tab3:
                 
                 # Create realistic profiles with proper parameters
                 waste_profile, bund_profile = create_realistic_cross_section_profile(
-                    x_points, cross_section_x, cross_section_y, is_vertical=False, 
-                    results_data=results, bund_h=bund_height, external_slope_param=external_slope
+                    points=x_points,
+                    cross_section_pos=cs_x,
+                    is_vertical=is_vert,
+                    results_data=results,
+                    bund_h=bund_height,
+                    external_slope_param=external_slope
                 )
                 
                 # Add ground level
@@ -723,7 +738,7 @@ with tab3:
             for level in results['levels']:
                 if level['Volume'] > 0:
                     l, w = level['Length'], level['Width']
-                    if abs(cross_section_x) <= l/2 and abs(cross_section_y) <= w/2:
+                    if abs(cs_x) <= l/2 and abs(cs_y) <= w/2:
                         level_info.append({
                             'Level': level['Level'],
                             'Type': level['Type'],
