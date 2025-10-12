@@ -358,7 +358,7 @@ def calculate_landfill_parameters():
         'max_height': current_z
     }
 
-# Calculate parameters
+# Calculate parameters - this will be executed when the script runs
 results = calculate_landfill_parameters()
 
 with tab2:
@@ -599,7 +599,7 @@ with tab3:
             # Generate detailed cross-section profile
             y_points = np.linspace(-length/2, length/2, 200)
             
-            # Create realistic profiles with proper parameters
+            # Create realistic profiles with proper parameters - all variables are now available
             waste_profile, bund_profile = create_realistic_cross_section_profile(
                 y_points, cross_section_x, cross_section_y, is_vertical=True, 
                 results_data=results, bund_h=bund_height, external_slope_param=external_slope
@@ -649,7 +649,7 @@ with tab3:
             # Generate detailed cross-section profile
             x_points = np.linspace(-width/2, width/2, 200)
             
-            # Create realistic profiles with proper parameters
+            # Create realistic profiles with proper parameters - all variables are now available
             waste_profile, bund_profile = create_realistic_cross_section_profile(
                 x_points, cross_section_x, cross_section_y, is_vertical=False, 
                 results_data=results, bund_h=bund_height, external_slope_param=external_slope
