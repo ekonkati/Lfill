@@ -50,27 +50,31 @@ st.markdown("""
 st.markdown('<h1 class="main-header">🏗️ Landfill Construction Simulator</h1>', unsafe_allow_html=True)
 st.markdown("A comprehensive tool for landfill design, volume calculation, and interactive visualization")
 
-# Initialize session state variables to avoid undefined variable errors
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = True
-    st.session_state.daily_quantity = 1000.0
-    st.session_state.duration = 25.0
-    st.session_state.density = 1.00
-    st.session_state.width = 600.0
-    st.session_state.length = 600.0
-    st.session_state.landfill_area_acres = 10.0
-    st.session_state.bund_width = 5.0
-    st.session_state.bund_height = 4.0
-    st.session_state.waste_height = 5.0
-    st.session_state.berm_width = 4.0
-    st.session_state.external_slope = 2.0
-    st.session_state.internal_slope = 3.0
-    st.session_state.waste_slope = 3.0
-    st.session_state.depth_below_ngl = 2.0
-    st.session_state.anchor_trench_depth = 1.5
-    st.session_state.anchor_trench_width = 2.0
-    st.session_state.cost_per_sqm = 3850.0
-    st.session_state.leachate_percentage = 20
+# Initialize session state variables properly
+def initialize_session_state():
+    if 'initialized' not in st.session_state:
+        st.session_state.initialized = True
+        st.session_state.daily_quantity = 1000.0
+        st.session_state.duration = 25.0
+        st.session_state.density = 1.00
+        st.session_state.width = 600.0
+        st.session_state.length = 600.0
+        st.session_state.landfill_area_acres = 10.0
+        st.session_state.bund_width = 5.0
+        st.session_state.bund_height = 4.0
+        st.session_state.waste_height = 5.0
+        st.session_state.berm_width = 4.0
+        st.session_state.external_slope = 2.0
+        st.session_state.internal_slope = 3.0
+        st.session_state.waste_slope = 3.0
+        st.session_state.depth_below_ngl = 2.0
+        st.session_state.anchor_trench_depth = 1.5
+        st.session_state.anchor_trench_width = 2.0
+        st.session_state.cost_per_sqm = 3850.0
+        st.session_state.leachate_percentage = 20
+
+# Initialize session state if not already done
+initialize_session_state()
 
 # Display results in tabs
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📋 Input Parameters", "📊 Results Summary", "🎯 Interactive Visualization", "📐 Detailed Calculations", "💰 Cost Analysis", "📈 Reports"])
@@ -85,38 +89,37 @@ with tab1:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Basic Parameters**")
-            daily_quantity = st.number_input("Daily Waste (TPD)", value=st.session_state.daily_quantity, min_value=1.0, step=10.0, key="daily")
-            duration = st.number_input("Duration (years)", value=st.session_state.duration, min_value=1.0, step=1.0, key="duration")
-            density = st.number_input("Density (ton/Cum)", value=st.session_state.density, min_value=0.1, step=0.01, key="density")
+            daily_quantity = st.number_input("Daily Waste (TPD)", value=float(st.session_state.daily_quantity), min_value=1.0, step=10.0, key="daily")
+            duration = st.number_input("Duration (years)", value=float(st.session_state.duration), min_value=1.0, step=1.0, key="duration")
+            density = st.number_input("Density (ton/Cum)", value=float(st.session_state.density), min_value=0.1, step=0.01, key="density")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Land Dimensions**")
-            width = st.number_input("Width (m)", value=st.session_state.width, min_value=10.0, step=10.0, key="width")
-            length = st.number_input("Length (m)", value=st.session_state.length, min_value=10.0, step=10.0, key="length")
-            landfill_area_acres = st.number_input("Area (Acres)", value=st.session_state.landfill_area_acres, min_value=1.0, step=0.5, key="area")
+            width = st.number_input("Width (m)", value=float(st.session_state.width), min_value=10.0, step=10.0, key="width")
+            length = st.number_input("Length (m)", value=float(st.session_state.length), min_value=10.0, step=10.0, key="length")
+            landfill_area_acres = st.number_input("Area (Acres)", value=float(st.session_state.landfill_area_acres), min_value=1.0, step=0.5, key="area")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with col3:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Bund Parameters**")
-            bund_width = st.number_input("Bund Width (m)", value=st.session_state.bund_width, min_value=1.0, step=0.5, key="bund_width")
-            bund_height = st.number_input("Bund Height (m)", value=st.session_state.bund_height, min_value=1.0, step=0.5, key="bund_height")
-            waste_height = st.number_input("Waste Height (m)", value=st.session_state.waste_height, min_value=1.0, step=0.5, key="waste_height")
-            berm_width = st.number_input("Berm Width (m)", value=st.session_state.berm_width, min_value=1.0, step=0.5, key="berm_width")
+            bund_width = st.number_input("Bund Width (m)", value=float(st.session_state.bund_width), min_value=1.0, step=0.5, key="bund_width")
+            bund_height = st.number_input("Bund Height (m)", value=float(st.session_state.bund_height), min_value=1.0, step=0.5, key="bund_height")
+            waste_height = st.number_input("Waste Height (m)", value=float(st.session_state.waste_height), min_value=1.0, step=0.5, key="waste_height")
+            berm_width = st.number_input("Berm Width (m)", value=float(st.session_state.berm_width), min_value=1.0, step=0.5, key="berm_width")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with col4:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Slope Parameters**")
-            external_slope = st.number_input("External Slope", value=st.session_state.external_slope, min_value=1.0, step=0.5, key="external")
-            internal_slope = st.number_input("Internal Slope", value=st.session_state.internal_slope, min_value=1.0, step=0.5, key="internal")
-            waste_slope = st.number_input("Waste Slope", value=st.session_state.waste_slope, min_value=1.0, step=0.5, key="waste")
-            depth_below_ngl = st.number_input("Depth Below NGL (m)", value=st.session_state.depth_below_ngl, min_value=0.0, step=0.5, key="depth")
+            external_slope = st.number_input("External Slope", value=float(st.session_state.external_slope), min_value=1.0, step=0.5, key="external")
+            internal_slope = st.number_input("Internal Slope", value=float(st.session_state.internal_slope), min_value=1.0, step=0.5, key="internal")
+            waste_slope = st.number_input("Waste Slope", value=float(st.session_state.waste_slope), min_value=1.0, st.slider("Leachate %", min_value=5, max_value=50, value=float(st.session_state.leachate_percentage), key="leachate")
             st.markdown('</div>', unsafe_allow_html=True)
     
     # Cost and Leachate parameters in a compact row
@@ -126,10 +129,9 @@ with tab1:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Trench & Cost**")
-            anchor_trench_depth = st.number_input("Anchor Trench Depth (m)", value=st.session_state.anchor_trench_depth, min_value=0.5, step=0.5, key="anchor_depth")
-            anchor_trench_width = st.number_input("Anchor Trench Width (m)", value=st.session_state.anchor_trench_width, min_value=1.0, step=0.5, key="anchor_width")
-            cost_per_sqm = st.number_input("Cost per Sqm (INR)", value=st.session_state.cost_per_sqm, min_value=100.0, step=100.0, key="cost")
-            leachate_percentage = st.slider("Leachate %", min_value=5, max_value=50, value=st.session_state.leachate_percentage, key="leachate")
+            anchor_trench_depth = st.number_input("Anchor Trench Depth (m)", value=float(st.session_state.anchor_trench_depth), min_value=0.5, step=0.5, key="anchor_depth")
+            anchor_trench_width = st.number_input("Anchor Trench Width (m)", value=float(st.session_state.anchor_trench_width), min_value=1.0, step=0.5, key="anchor_width")
+            cost_per_sqm = st.number_input("Cost per Sqm (INR)", value=float(st.session_state.cost_per_sqm), min_value=100.0, step=100.0, key="cost")
             st.markdown('</div>', unsafe_allow_html=True)
 
 # Define the cross-section profile function with proper landfill structure
@@ -257,12 +259,12 @@ def calculate_landfill_parameters():
     levels_data = []
     
     # 1. Anchor Trench - Bottom-most level
-    anchor_trench_volume = (width - 2 * anchor_width) * (length - 2 * anchor_width) * anchor_trench_depth
+    anchor_trench_volume = (width - 2 * anchor_trench_width) * (length - 2 * anchor_trench_width) * anchor_trench_depth
     levels_data.append({
         'Level': 'Anchor Trench',
-        'Length': width - 2 * anchor_width,
-        'Width': length - 2 * anchor_width,
-        'Area': (width - 2 * anchor_width) * (length - 2 * anchor_width),
+        'Length': width - 2 * anchor_trench_width,
+        'Width': length - 2 * anchor_trench_width,
+        'Area': (width - 2 * anchor_trench_width) * (length - 2 * anchor_trench_width),
         'Height': anchor_trench_depth,
         'Volume': anchor_trench_volume,
         'Type': 'Anchor Trench',
@@ -271,8 +273,8 @@ def calculate_landfill_parameters():
     })
     
     # 2. Below Ground Level (BBL) - Excavation below ground forming tub structure
-    bbl_length = width - 4 * anchor_width
-    bbl_width_calc = length - 4 * anchor_width
+    bbl_length = width - 4 * anchor_trench_width
+    bbl_width_calc = length - 4 * anchor_trench_width
     
     if bbl_length <= 0 or bbl_width_calc <= 0:
         bbl_length = width * 0.8
@@ -297,7 +299,7 @@ def calculate_landfill_parameters():
     bl_length = bbl_length + 2 * (depth_below_ngl * internal_slope)
     bl_width = bbl_width_calc + 2 * (depth_below_ngl * internal_slope)
     bl_area = bl_length * bl_width
-    bl_volume = ((bbl_area + bbl_area) / 2) * bund_height
+    bl_volume = ((bbl_area + bl_area) / 2) * bund_height
     
     levels_data.append({
         'Level': 'BL',
@@ -348,7 +350,7 @@ def calculate_landfill_parameters():
         berm_length = abl_length - (berm_width * 2)
         berm_width_calc = abl_width_calc - (berm_width * 2)
         
-        if berm_length <= 0 or berm_width_calc <= 0:
+        if berm_length <= 0 or bbl_width_calc <= 0:
             break
             
         berm_area = berm_length * berm_width_calc
@@ -781,7 +783,7 @@ with tab3:
                     name='Waste Profile',
                     fill='tonexty',
                     fillcolor='rgba(101, 67, 33, 0.5)',
-                    hovertemplate='X: %{x:.1f}m<br>Waste Height: %{y:.1f} <extra></extra>'
+                    hovertemplate='X: %{x:.1f}m<br>Waste Height: %{y:.1f}m<extra></extra>'
                 ))
                 
                 # Add level annotations
@@ -852,7 +854,7 @@ with tab4:
         leachate_data = {
             'Parameter': ['Waste per Annum', 'Leachate %', 'Leachate TPA', 'Leachate KLD'],
             'Value': [f"{results['tpa']:,.2f} TPA", f"{leachate_percentage}%", 
-                     f"{results['leachate_tpa']:,.2f} TPA", f"{results['leachate_kld']:.2f} KLD"]
+                     f"{results['leachate_tpa']:,.2f} TPA", f"{results['leachate_tpa']:,.2f} TPA", f"{results['leachate_kld']:.2f} KLD"]
         }
         st.dataframe(pd.DataFrame(leachate_data), use_container_width=True)
     
@@ -1002,7 +1004,7 @@ with tab6:
     
     with col2:
         st.info("""
-        📈 **Export Options:**
+        📈� **Export Options:**
         - Excel spreadsheet with calculations
         - CSV data for further analysis
         - High-resolution images
@@ -1028,7 +1030,7 @@ with tab6:
     
     with summary_col2:
         st.metric("Total Investment", f"₹{results['total_cost']:,.0f}")
-        st.metric("Cost per Ton", f"₹{results['per_ton_cost']:.0f}")
+        st.metric("Cost per Ton", f"₹{results['per_ton_cost']:,.0f}")
     
     with summary_col3:
         st.metric("Daily Processing", f"{daily_quantity:.0f} TPD")
