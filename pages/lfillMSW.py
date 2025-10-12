@@ -50,6 +50,26 @@ st.markdown("""
 st.markdown('<h1 class="main-header">🏗️ Landfill Construction Simulator</h1>', unsafe_allow_html=True)
 st.markdown("A comprehensive tool for landfill design, volume calculation, and interactive visualization")
 
+# Initialize session state variables to avoid undefined variable errors
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = True
+    st.session_state.daily_quantity = 1000.0
+    st.session_state.duration = 25.0
+    st.session_state.density = 1.00
+    st.session_state.width = 600.0
+    st.session_state.length = 600.0
+    st.session_state.landfill_area_acres = 10.0
+    st.session_state.bund_width = 5.0
+    st.session_state.bund_height = 4.0
+    st.session_state.waste_height = 5.0
+    st.session_state.berm_width = 4.0
+    st.session_state.external_slope = 2.0
+    st.session_state.internal_slope = 3.0
+    st.session_state.waste_slope = 3.0
+    st.session_state.depth_below_ngl = 2.0
+    st.session_state.cost_per_sqm = 3850.0
+    st.session_state.leachate_percentage = 20
+
 # Display results in tabs
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📋 Input Parameters", "📊 Results Summary", "🎯 Interactive Visualization", "📐 Detailed Calculations", "💰 Cost Analysis", "📈 Reports"])
 
@@ -63,38 +83,38 @@ with tab1:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Basic Parameters**")
-            daily_quantity = st.number_input("Daily Waste (TPD)", value=1000.0, min_value=1.0, step=10.0, key="daily")
-            duration = st.number_input("Duration (years)", value=25.0, min_value=1.0, step=1.0, key="duration")
-            density = st.number_input("Density (ton/Cum)", value=1.00, min_value=0.1, step=0.01, key="density")
+            daily_quantity = st.number_input("Daily Waste (TPD)", value=st.session_state.daily_quantity, min_value=1.0, step=10.0, key="daily")
+            duration = st.number_input("Duration (years)", value=st.session_state.duration, min_value=1.0, step=1.0, key="duration")
+            density = st.number_input("Density (ton/Cum)", value=st.session_state.density, min_value=0.1, step=0.01, key="density")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Land Dimensions**")
-            width = st.number_input("Width (m)", value=600.0, min_value=10.0, step=10.0, key="width")
-            length = st.number_input("Length (m)", value=600.0, min_value=10.0, step=10.0, key="length")
-            landfill_area_acres = st.number_input("Area (Acres)", value=10.0, min_value=1.0, step=0.5, key="area")
+            width = st.number_input("Width (m)", value=st.session_state.width, min_value=10.0, step=10.0, key="width")
+            length = st.number_input("Length (m)", value=st.session_state.length, min_value=10.0, step=10.0, key="length")
+            landfill_area_acres = st.number_input("Area (Acres)", value=st.session_state.landfill_area_acres, min_value=1.0, step=0.5, key="area")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with col3:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Bund Parameters**")
-            bund_width = st.number_input("Bund Width (m)", value=5.0, min_value=1.0, step=0.5, key="bund_width")
-            bund_height = st.number_input("Bund Height (m)", value=4.0, min_value=1.0, step=0.5, key="bund_height")
-            waste_height = st.number_input("Waste Height (m)", value=5.0, min_value=1.0, step=0.5, key="waste_height")
-            berm_width = st.number_input("Berm Width (m)", value=4.0, min_value=1.0, step=0.5, key="berm_width")
+            bund_width = st.number_input("Bund Width (m)", value=st.session_state.bund_width, min_value=1.0, step=0.5, key="bund_width")
+            bund_height = st.number_input("Bund Height (m)", value=st.session_state.bund_height, min_value=1.0, step=0.5, key="bund_height")
+            waste_height = st.number_input("Waste Height (m)", value=st.session_state.waste_height, min_value=1.0, step=0.5, key="waste_height")
+            berm_width = st.number_input("Berm Width (m)", value=st.session_state.berm_width, min_value=1.0, step=0.5, key="berm_width")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with col4:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Slope Parameters**")
-            external_slope = st.number_input("External Slope", value=2.0, min_value=1.0, step=0.5, key="external")
-            internal_slope = st.number_input("Internal Slope", value=3.0, min_value=1.0, step=0.5, key="internal")
-            waste_slope = st.number_input("Waste Slope", value=3.0, min_value=1.0, step=0.5, key="waste")
-            depth_below_ngl = st.number_input("Depth Below NGL (m)", value=2.0, min_value=0.0, step=0.5, key="depth")
+            external_slope = st.number_input("External Slope", value=st.session_state.external_slope, min_value=1.0, step=0.5, key="external")
+            internal_slope = st.number_input("Internal Slope", value=st.session_state.internal_slope, min_value=1.0, step=0.5, key="internal")
+            waste_slope = st.number_input("Waste Slope", value=st.session_state.waste_slope, min_value=1.0, step=0.5, key="waste")
+            depth_below_ngl = st.number_input("Depth Below NGL (m)", value=st.session_state.depth_below_ngl, min_value=0.0, step=0.5, key="depth")
             st.markdown('</div>', unsafe_allow_html=True)
     
     # Cost and Leachate parameters in a compact row
@@ -104,8 +124,8 @@ with tab1:
         with st.container():
             st.markdown('<div class="input-group">', unsafe_allow_html=True)
             st.markdown("**Cost & Leachate**")
-            cost_per_sqm = st.number_input("Cost per Sqm (INR)", value=3850.0, min_value=100.0, step=100.0, key="cost")
-            leachate_percentage = st.slider("Leachate %", min_value=5, max_value=50, value=20, key="leachate")
+            cost_per_sqm = st.number_input("Cost per Sqm (INR)", value=st.session_state.cost_per_sqm, min_value=100.0, step=100.0, key="cost")
+            leachate_percentage = st.slider("Leachate %", min_value=5, max_value=50, value=st.session_state.leachate_percentage, key="leachate")
             st.markdown('</div>', unsafe_allow_html=True)
 
 # Define the cross-section profile function with parameters instead of relying on global variables
@@ -592,128 +612,135 @@ with tab3:
         # Create 2D cross-section with proper bund modeling
         fig_2d = go.Figure()
         
-        if cross_section_type == "Vertical (Y-axis)":
-            # Vertical cross-section (along Y-axis)
-            st.write("📐 Vertical Cross-Section (Along Y-axis)")
+        # Only create cross-section if we have the required variables
+        try:
+            if cross_section_type == "Vertical (Y-axis)":
+                # Vertical cross-section (along Y-axis)
+                st.write("📐 Vertical Cross-Section (Along Y-axis)")
+                
+                # Generate detailed cross-section profile
+                y_points = np.linspace(-length/2, length/2, 200)
+                
+                # Create realistic profiles with proper parameters
+                waste_profile, bund_profile = create_realistic_cross_section_profile(
+                    y_points, cross_section_x, cross_section_y, is_vertical=True, 
+                    results_data=results, bund_h=bund_height, external_slope_param=external_slope
+                )
+                
+                # Add ground level
+                fig_2d.add_trace(go.Scatter(
+                    x=y_points, y=[0]*len(y_points),
+                    mode='lines',
+                    line=dict(color='green', width=2, dash='dash'),
+                    name='Ground Level',
+                    hoverinfo='skip'
+                ))
+                
+                # Add bund profile with proper structure
+                fig_2d.add_trace(go.Scatter(
+                    x=y_points, y=bund_profile,
+                    mode='lines',
+                    line=dict(color='#D2691E', width=3),
+                    name='Bund Profile',
+                    hovertemplate='Y: %{x:.1f}m<br>Bund Height: %{y:.1f}m<extra></extra>'
+                ))
+                
+                # Add waste profile
+                fig_2d.add_trace(go.Scatter(
+                    x=y_points, y=waste_profile,
+                    mode='lines',
+                    line=dict(color='#654321', width=3),
+                    name='Waste Profile',
+                    fill='tonexty',
+                    fillcolor='rgba(101, 67, 33, 0.5)',
+                    hovertemplate='Y: %{x:.1f}m<br>Waste Height: %{y:.1f}m<extra></extra>'
+                ))
+                
+                fig_2d.update_layout(
+                    title="Vertical Cross-Section with Proper Bund Structure",
+                    xaxis_title="Distance along Y-axis (m)",
+                    yaxis_title="Height (m)",
+                    height=400,
+                    showlegend=True
+                )
+                
+            else:
+                # Horizontal cross-section (along X-axis)
+                st.write("📐 Horizontal Cross-Section (Along X-axis)")
+                
+                # Generate detailed cross-section profile
+                x_points = np.linspace(-width/2, width/2, 200)
+                
+                # Create realistic profiles with proper parameters
+                waste_profile, bund_profile = create_realistic_cross_section_profile(
+                    x_points, cross_section_x, cross_section_y, is_vertical=False, 
+                    results_data=results, bund_h=bund_height, external_slope_param=external_slope
+                )
+                
+                # Add ground level
+                fig_2d.add_trace(go.Scatter(
+                    x=x_points, y=[0]*len(x_points),
+                    mode='lines',
+                    line=dict(color='green', width=2, dash='dash'),
+                    name='Ground Level',
+                    hoverinfo='skip'
+                ))
+                
+                # Add bund profile with proper structure
+                fig_2d.add_trace(go.Scatter(
+                    x=x_points, y=bund_profile,
+                    mode='lines',
+                    line=dict(color='#D2691E', width=3),
+                    name='Bund Profile',
+                    hovertemplate='X: %{x:.1f}m<br>Bund Height: %{y:.1f}m<extra></extra>'
+                ))
+                
+                # Add waste profile
+                fig_2d.add_trace(go.Scatter(
+                    x=x_points, y=waste_profile,
+                    mode='lines',
+                    line=dict(color='#654321', width=3),
+                    name='Waste Profile',
+                    fill='tonexty',
+                    fillcolor='rgba(101, 67, 33, 0.5)',
+                    hovertemplate='X: %{x:.1f}m<br>Waste Height: %{y:.1f}m<extra></extra>'
+                ))
+                
+                fig_2d.update_layout(
+                    title="Horizontal Cross-Section with Proper Bund Structure",
+                    xaxis_title="Distance along X-axis (m)",
+                    yaxis_title="Height (m)",
+                    height=400,
+                    showlegend=True
+                )
             
-            # Generate detailed cross-section profile
-            y_points = np.linspace(-length/2, length/2, 200)
+            # Display 2D cross-section
+            st.plotly_chart(fig_2d, use_container_width=True)
             
-            # Create realistic profiles with proper parameters - all variables are now available
-            waste_profile, bund_profile = create_realistic_cross_section_profile(
-                y_points, cross_section_x, cross_section_y, is_vertical=True, 
-                results_data=results, bund_h=bund_height, external_slope_param=external_slope
-            )
+            # Add level information
+            st.subheader("Level Information at Cross-Section")
+            level_info = []
+            for level in results['levels']:
+                if level['Volume'] > 0:
+                    l, w = level['Length'], level['Width']
+                    if abs(cross_section_x) <= l/2 and abs(cross_section_y) <= w/2:
+                        level_info.append({
+                            'Level': level['Level'],
+                            'Type': level['Type'],
+                            'Height': f"{level['Bottom_Z']:.1f} - {level['Top_Z']:.1f} m",
+                            'Volume': f"{level['Volume']:.2f} Cum"
+                        })
             
-            # Add ground level
-            fig_2d.add_trace(go.Scatter(
-                x=y_points, y=[0]*len(y_points),
-                mode='lines',
-                line=dict(color='green', width=2, dash='dash'),
-                name='Ground Level',
-                hoverinfo='skip'
-            ))
-            
-            # Add bund profile with proper structure
-            fig_2d.add_trace(go.Scatter(
-                x=y_points, y=bund_profile,
-                mode='lines',
-                line=dict(color='#D2691E', width=3),
-                name='Bund Profile',
-                hovertemplate='Y: %{x:.1f}m<br>Bund Height: %{y:.1f}m<extra></extra>'
-            ))
-            
-            # Add waste profile
-            fig_2d.add_trace(go.Scatter(
-                x=y_points, y=waste_profile,
-                mode='lines',
-                line=dict(color='#654321', width=3),
-                name='Waste Profile',
-                fill='tonexty',
-                fillcolor='rgba(101, 67, 33, 0.5)',
-                hovertemplate='Y: %{x:.1f}m<br>Waste Height: %{y:.1f}m<extra></extra>'
-            ))
-            
-            fig_2d.update_layout(
-                title="Vertical Cross-Section with Proper Bund Structure",
-                xaxis_title="Distance along Y-axis (m)",
-                yaxis_title="Height (m)",
-                height=400,
-                showlegend=True
-            )
-            
-        else:
-            # Horizontal cross-section (along X-axis)
-            st.write("📐 Horizontal Cross-Section (Along X-axis)")
-            
-            # Generate detailed cross-section profile
-            x_points = np.linspace(-width/2, width/2, 200)
-            
-            # Create realistic profiles with proper parameters - all variables are now available
-            waste_profile, bund_profile = create_realistic_cross_section_profile(
-                x_points, cross_section_x, cross_section_y, is_vertical=False, 
-                results_data=results, bund_h=bund_height, external_slope_param=external_slope
-            )
-            
-            # Add ground level
-            fig_2d.add_trace(go.Scatter(
-                x=x_points, y=[0]*len(x_points),
-                mode='lines',
-                line=dict(color='green', width=2, dash='dash'),
-                name='Ground Level',
-                hoverinfo='skip'
-            ))
-            
-            # Add bund profile with proper structure
-            fig_2d.add_trace(go.Scatter(
-                x=x_points, y=bund_profile,
-                mode='lines',
-                line=dict(color='#D2691E', width=3),
-                name='Bund Profile',
-                hovertemplate='X: %{x:.1f}m<br>Bund Height: %{y:.1f}m<extra></extra>'
-            ))
-            
-            # Add waste profile
-            fig_2d.add_trace(go.Scatter(
-                x=x_points, y=waste_profile,
-                mode='lines',
-                line=dict(color='#654321', width=3),
-                name='Waste Profile',
-                fill='tonexty',
-                fillcolor='rgba(101, 67, 33, 0.5)',
-                hovertemplate='X: %{x:.1f}m<br>Waste Height: %{y:.1f}m<extra></extra>'
-            ))
-            
-            fig_2d.update_layout(
-                title="Horizontal Cross-Section with Proper Bund Structure",
-                xaxis_title="Distance along X-axis (m)",
-                yaxis_title="Height (m)",
-                height=400,
-                showlegend=True
-            )
+            if level_info:
+                st.dataframe(pd.DataFrame(level_info), use_container_width=True)
+            else:
+                st.info("No landfill levels at this location")
+                
+        except Exception as e:
+            st.error(f"Error generating cross-section: {str(e)}")
+            st.info("Please try adjusting the cross-section position or parameters.")
         
-        # Display 2D cross-section
-        st.plotly_chart(fig_2d, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Add level information
-        st.subheader("Level Information at Cross-Section")
-        level_info = []
-        for level in results['levels']:
-            if level['Volume'] > 0:
-                l, w = level['Length'], level['Width']
-                if abs(cross_section_x) <= l/2 and abs(cross_section_y) <= w/2:
-                    level_info.append({
-                        'Level': level['Level'],
-                        'Type': level['Type'],
-                        'Height': f"{level['Bottom_Z']:.1f} - {level['Top_Z']:.1f} m",
-                        'Volume': f"{level['Volume']:.2f} Cum"
-                    })
-        
-        if level_info:
-            st.dataframe(pd.DataFrame(level_info), use_container_width=True)
-        else:
-            st.info("No landfill levels at this location")
 
 with tab4:
     st.header("Detailed Calculations")
