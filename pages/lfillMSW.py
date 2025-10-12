@@ -108,17 +108,17 @@ with tab1:
             leachate_percentage = st.slider("Leachate %", min_value=5, max_value=50, value=20, key="leachate")
             st.markdown('</div>', unsafe_allow_html=True)
 
-# Define the cross-section profile function before it's used
-def create_realistic_cross_section_profile(points, cross_section_pos, is_vertical):
+# Define the cross-section profile function with parameters instead of relying on global variables
+def create_realistic_cross_section_profile(points, cross_section_pos, is_vertical, results_data, bund_h, external_slope_param):
     """Create realistic cross-section profile with proper bund structure"""
     profile = []
     bund_profile = []
     
     # Calculate bund geometry
-    bund_inner_length = results['bl_length']
-    bund_inner_width = results['bl_width']
-    bund_outer_length = bund_inner_length + 2 * (bund_height * external_slope)
-    bund_outer_width = bund_inner_width + 2 * (bund_height * external_slope)
+    bund_inner_length = results_data['bl_length']
+    bund_inner_width = results_data['bl_width']
+    bund_outer_length = bund_inner_length + 2 * (bund_h * external_slope_param)
+    bund_outer_width = bund_inner_width + 2 * (bund_h * external_slope_param)
     
     for point in points:
         if is_vertical:
@@ -130,7 +130,7 @@ def create_realistic_cross_section_profile(points, cross_section_pos, is_vertica
             if abs(y_pos) <= bund_outer_length/2:
                 # Calculate waste height
                 waste_height = 0
-                for level in results['levels']:
+                for level in results_data['levels']:
                     if level['Volume'] > 0:
                         l, w = level['Length'], level['Width']
                         if abs(x_pos) <= l/2 and abs(y_pos) <= w/2:
@@ -149,17 +149,17 @@ def create_realistic_cross_section_profile(points, cross_section_pos, is_vertica
                             if dist_from_inner_x > 0 and dist_from_inner_y > 0:
                                 # Corner area
                                 corner_dist = math.sqrt(dist_from_inner_x**2 + dist_from_inner_y**2)
-                                bund_h = min(bund_height, corner_dist / external_slope)
+                                bund_h_calc = min(bund_h, corner_dist / external_slope_param)
                             elif dist_from_inner_x > 0:
                                 # Side area
-                                bund_h = min(bund_height, dist_from_inner_x / external_slope)
+                                bund_h_calc = min(bund_h, dist_from_inner_x / external_slope_param)
                             else:
                                 # End area
-                                bund_h = min(bund_height, dist_from_inner_y / external_slope)
+                                bund_h_calc = min(bund_h, dist_from_inner_y / external_slope_param)
                         else:
-                            bund_h = 0
+                            bund_h_calc = 0
                         
-                        bund_profile.append(bund_h)
+                        bund_profile.append(bund_h_calc)
                     else:
                         bund_profile.append(0)
                 else:
@@ -176,7 +176,7 @@ def create_realistic_cross_section_profile(points, cross_section_pos, is_vertica
             if abs(x_pos) <= bund_outer_length/2:
                 # Calculate waste height
                 waste_height = 0
-                for level in results['levels']:
+                for level in results_data['levels']:
                     if level['Volume'] > 0:
                         l, w = level['Length'], level['Width']
                         if abs(x_pos) <= l/2 and abs(y_pos) <= w/2:
@@ -195,17 +195,17 @@ def create_realistic_cross_section_profile(points, cross_section_pos, is_vertica
                             if dist_from_inner_x > 0 and dist_from_inner_y > 0:
                                 # Corner area
                                 corner_dist = math.sqrt(dist_from_inner_x**2 + dist_from_inner_y**2)
-                                bund_h = min(bund_height, corner_dist / external_slope)
+                                bund_h_calc = min(bund_h, corner_dist / external_slope_param)
                             elif dist_from_inner_x > 0:
                                 # Side area
-                                bund_h = min(bund_height, dist_from_inner_x / external_slope)
+                                bund_h_calc = min(bund_h, dist_from_inner_x / external_slope_param)
                             else:
                                 # End area
-                                bund_h = min(bund_height, dist_from_inner_y / external_slope)
+                                bund_h_calc = min(bund_h, dist_from_inner_y / external_slope_param)
                         else:
-                            bund_h = 0
+                            bund_h_calc = 0
                         
-                        bund_profile.append(bund_h)
+                        bund_profile.append(bund_h_calc)
                     else:
                         bund_profile.append(0)
                 else:
@@ -599,8 +599,11 @@ with tab3:
             # Generate detailed cross-section profile
             y_points = np.linspace(-length/2, length/2, 200)
             
-            # Create realistic profiles
-            waste_profile, bund_profile = create_realistic_cross_section_profile(y_points, cross_section_x, cross_section_y, is_vertical=True)
+            # Create realistic profiles with proper parameters
+            waste_profile, bund_profile = create_realistic_cross_section_profile(
+                y_points, cross_section_x, cross_section_y, is_vertical=True, 
+                results_data=results, bund_h=bund_height, external_slope_param=external_slope
+            )
             
             # Add ground level
             fig_2d.add_trace(go.Scatter(
@@ -646,8 +649,11 @@ with tab3:
             # Generate detailed cross-section profile
             x_points = np.linspace(-width/2, width/2, 200)
             
-            # Create realistic profiles
-            waste_profile, bund_profile = create_realistic_cross_section_profile(x_points, cross_section_x, cross_section_y, is_vertical=False)
+            # Create realistic profiles with proper parameters
+            waste_profile, bund_profile = create_realistic_cross_section_profile(
+                x_points, cross_section_x, cross_section_y, is_vertical=False, 
+                results_data=results, bund_h=bund_height, external_slope_param=external_slope
+            )
             
             # Add ground level
             fig_2d.add_trace(go.Scatter(
