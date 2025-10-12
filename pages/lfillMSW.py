@@ -484,7 +484,7 @@ with tab3:
         # Calculate bund dimensions
         bund_inner_length = results['bl_length']
         bund_inner_width = results['bl_width']
-        bund_inner_length + 2 * (bund_height * external bund_outer_length =_slope)
+        bund_outer_length = bund_inner_length + 2 * (bund_height * external_slope)
         bund_outer_width = bund_inner_width + 2 * (bund_height * external_slope)
         
         # Model the complete landfill structure
