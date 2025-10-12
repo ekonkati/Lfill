@@ -82,7 +82,7 @@ if 'initialized' not in st.session_state:
     st.session_state.bund_width = 5.0
     st.session_state.bund_height = 4.0
     st.session_state.waste_height = 5.0
-    st.session_state.berm_width = 4.0
+    st.session_state.berm_width_param = 4.0  # Renamed to avoid conflict
     st.session_state.external_slope = 2.0
     st.session_state.internal_slope = 3.0
     st.session_state.waste_slope = 3.0
@@ -135,7 +135,7 @@ with tab1:
             bund_width = st.number_input("Bund Width (m)", value=st.session_state.bund_width, min_value=1.0, step=0.5, key="bund_width")
             bund_height = st.number_input("Bund Height (m)", value=st.session_state.bund_height, min_value=1.0, step=0.5, key="bund_height")
             waste_height = st.number_input("Waste Height (m)", value=st.session_state.waste_height, min_value=1.0, step=0.5, key="waste_height")
-            berm_width = st.number_input("Berm Width (m)", value=st.session_state.berm_width, min_value=1.0, step=0.5, key="berm_width")
+            berm_width_param = st.number_input("Berm Width (m)", value=st.session_state.berm_width_param, min_value=1.0, step=0.5, key="berm_width")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with col4:
@@ -403,7 +403,7 @@ def create_above_ground_profile(points, cross_section_pos, is_vertical, results_
     ag_levels = []
     
     for i in range(1, 10):  # Calculate up to 9 levels
-        # ABL level - waste filling
+        # AGL level - waste filling
         new_width = current_width - (waste_height * waste_slope * 2)
         new_length = current_length - (waste_height * waste_slope * 2)
         new_half_width = new_width / 2
@@ -429,12 +429,12 @@ def create_above_ground_profile(points, cross_section_pos, is_vertical, results_
         current_half_length = new_half_length
         
         # Berm level
-        berm_width = current_width - (berm_width * 2)
-        berm_length = current_length - (berm_width * 2)
-        berm_half_width = berm_width / 2
+        berm_width_calc = current_width - (berm_width_param * 2)  # Use the parameter variable
+        berm_length = current_length - (berm_width_param * 2)
+        berm_half_width = berm_width_calc / 2
         berm_half_length = berm_length / 2
         
-        if berm_width <= 0 or berm_length <= 0:
+        if berm_width_calc <= 0 or berm_length <= 0:
             break
             
         ag_levels.append({
@@ -445,7 +445,7 @@ def create_above_ground_profile(points, cross_section_pos, is_vertical, results_
             'half_length': berm_half_length
         })
         
-        current_width = berm_width
+        current_width = berm_width_calc
         current_length = berm_length
         current_half_width = berm_half_width
         current_half_length = berm_half_length
@@ -660,18 +660,18 @@ def calculate_landfill_parameters():
         current_z += waste_height
         
         # Berm level
-        berm_width = new_width - (berm_width * 2)
-        berm_length = new_length - (berm_width * 2)
+        berm_width_calc = new_width - (berm_width_param * 2)  # Use the parameter variable
+        berm_length = new_length - (berm_width_param * 2)
         
-        if berm_width <= 0 or berm_length <= 0:
+        if berm_width_calc <= 0 or berm_length <= 0:
             break
             
-        berm_area = berm_width * berm_length
+        berm_area = berm_width_calc * berm_length
         
         levels_data.append({
             'Level': f'AGL {i} Berm',
             'Length': berm_length,
-            'Width': berm_width,
+            'Width': berm_width_calc,
             'Area': berm_area,
             'Height': 0.0,
             'Volume': 0.0,
@@ -680,7 +680,7 @@ def calculate_landfill_parameters():
             'Top_Z': current_z
         })
         
-        current_width = berm_width
+        current_width = berm_width_calc
         current_length = berm_length
     
     # Cost calculations
@@ -888,7 +888,7 @@ with tab3:
                 
                 # Calculate soil bund (inward sloping)
                 if abs(x_pos) <= top_ground_half_width and abs(y_pos) <= top_ground_half_length:
-                    if abs(x_pos) > top_bund_half_width or abs(y_pos) > top_bund_half_length:
+                    if abs(x_pos) > top_bund_half_width or abs(y_pos) > top_bund_half_width:
                         # In the soil bund area
                         dist_from_inner_edge_x = max(0, abs(x_pos) - top_bund_half_width)
                         dist_from_inner_edge_y = max(0, abs(y_pos) - top_bund_half_length)
@@ -946,17 +946,17 @@ with tab3:
                         current_length = new_length
                         
                         # Berm level
-                        berm_width = current_width - (berm_width * 2)
-                        berm_length = current_length - (berm_width * 2)
+                        berm_width_calc = current_width - (berm_width_param * 2)  # Use the parameter variable
+                        berm_length = current_length - (berm_width_param * 2)
                         
-                        if berm_width <= 0 or berm_length <= 0:
+                        if berm_width_calc <= 0 or berm_length <= 0:
                             break
                         
-                        current_width = berm_width
+                        current_width = berm_width_calc
                         current_length = berm_length
                 
                 # Calculate above-ground bund
-                if (abs(x_pos) > top_bund_half_width or abs(y_pos) > top_bund_half_length) and \
+                if (abs(x_pos) > top_bund_half_width or abs(y_pos) > top_bund_half_width) and \
                    (abs(x_pos) <= top_bund_half_width + bund_height * external_slope and \
                     abs(y_pos) <= top_bund_half_length + bund_height * external_slope):
                     # Outside waste area but within bund area
@@ -1560,4 +1560,152 @@ with tab5:
     with col1:
         st.markdown('<h3 class="section-header">Cost Breakdown</h3>', unsafe_allow_html=True)
         land_cost = landfill_area_acres * 4047 * cost_per_sqm
-        development_cost = results['total_cost']
+        development_cost = results['total_cost'] * 0.3
+        total_cost_calculated = land_cost + development_cost
+        
+        cost_data = {
+            'Item': ['Land Area Cost', 'Development Cost (30%)', 'Total Cost'],
+            'Amount (INR)': [
+                f"₹{land_cost:,.2f}",
+                f"₹{development_cost:,.2f}",
+                f"₹{total_cost_calculated:,.2f}"
+            ]
+        }
+        st.dataframe(pd.DataFrame(cost_data), use_container_width=True)
+        
+        # Cost per unit
+        st.markdown('<h3 class="section-header">Unit Costs</h3>', unsafe_allow_html=True)
+        unit_costs = {
+            'Metric': ['Cost per Ton', 'Cost per Cum', 'Cost per Sqm', 'Annual Cost'],
+            'Value': [
+                f"₹{results['per_ton_cost']:.2f}",
+                f"₹{results['per_ton_cost']/density:.2f}",
+                f"₹{cost_per_sqm:.2f}",
+                f"₹{total_cost_calculated/results['landfill_life']:.2f}" if results['landfill_life'] > 0 else "N/A"
+            ]
+        }
+        st.dataframe(pd.DataFrame(unit_costs), use_container_width=True)
+    
+    with col2:
+        # Cost visualization
+        st.markdown('<h3 class="section-header">Cost Distribution</h3>', unsafe_allow_html=True)
+        
+        fig_cost = go.Figure(data=[
+            go.Bar(
+                name='Land Cost',
+                x=['Total Cost'],
+                y=[land_cost],
+                text=f"₹{land_cost:,.0f}",
+                textposition='auto'
+            ),
+            go.Bar(
+                name='Development Cost',
+                x=['Total Cost'],
+                y=[development_cost],
+                text=f"₹{development_cost:,.0f}",
+                textposition='auto'
+            )
+        ])
+        
+        fig_cost.update_layout(
+            barmode='stack',
+            title="Cost Breakdown",
+            yaxis_title="Cost (INR)",
+            height=400
+        )
+        
+        st.plotly_chart(fig_cost, use_container_width=True)
+        
+        # ROI Analysis
+        st.markdown('<h3 class="section-header">Economic Indicators</h3>', unsafe_allow_html=True)
+        if daily_quantity > 0:
+            annual_revenue = daily_quantity * 365 * 500  # Assuming ₹500 per ton
+            payback_period = total_cost_calculated / annual_revenue if annual_revenue > 0 else 0
+            roi = (annual_revenue * results['landfill_life'] - total_cost_calculated) / total_cost_calculated * 100 if total_cost_calculated > 0 else 0
+            
+            metrics = {
+                'Indicator': ['Annual Revenue (Est.)', 'Payback Period', 'ROI'],
+                'Value': [
+                    f"₹{annual_revenue:,.2f}",
+                    f"{payback_period:.2f} years" if payback_period > 0 else "N/A",
+                    f"{roi:.2f}%"
+                ]
+            }
+            st.dataframe(pd.DataFrame(metrics), use_container_width=True)
+
+with tab6:
+    st.header("Reports and Export")
+    
+    st.markdown('<h3 class="section-header">Generate Comprehensive Report</h3>', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info("""
+        📊 **Report Contents:**
+        - Executive Summary
+        - Design Parameters
+        - Volume Calculations
+        - Cost Analysis
+        - Visualizations (2D & 3D)
+        - Recommendations
+        """)
+        
+        if st.button("📥 Generate PDF Report", type="primary"):
+            st.success("PDF report generation would be implemented here!")
+            st.balloons()
+    
+    with col2:
+        st.info("""
+        📈 **Export Options:**
+        - Excel spreadsheet with calculations
+        - CSV data for further analysis
+        - High-resolution images
+        - 3D model files
+        """)
+        
+        col2a, col2b = st.columns(2)
+        with col2a:
+            if st.button("📊 Export to Excel"):
+                st.success("Excel export would be implemented here!")
+        with col2b:
+            if st.button("📸 Export Images"):
+                st.success("Image export would be implemented here!")
+    
+    # Summary section
+    st.markdown('<h3 class="section-header">Project Summary</h3>', unsafe_allow_html=True)
+    
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    
+    with summary_col1:
+        st.metric("Total Capacity", f"{results['provided_quantity']:,.0f} Tons")
+        st.metric("Landfill Life", f"{results['landfill_life']:.1f} Years")
+    
+    with summary_col2:
+        st.metric("Total Investment", f"₹{results['total_cost']:,.0f}")
+        st.metric("Cost per Ton", f"₹{results['per_ton_cost']:.0f}")
+    
+    with summary_col3:
+        st.metric("Daily Processing", f"{daily_quantity:.0f} TPD")
+        st.metric("Annual Processing", f"{results['tpa']:,.0f} TPA")
+
+# Footer
+st.markdown("---")
+st.markdown("### 📝 Important Notes")
+st.info("""
+- This simulator provides estimates based on the input parameters
+- Actual construction may require additional engineering considerations
+- Environmental regulations and local conditions should be factored in
+- Regular monitoring and maintenance are essential for landfill operations
+- The 3D visualization is a simplified representation for conceptual understanding
+- Cross-sections are generated dynamically based on slider position
+- The capsule-shaped design provides better containment and environmental protection
+- Soil bunds provide additional containment and stability
+- Proper liner and drainage systems are essential for leachate management
+""")
+
+st.markdown("""
+<div style='text-align: center; color: #7f8c8d; margin-top: 2rem;'>
+    <p>Landfill Construction Simulator v3.0 | Capsule-Shaped Design with Enhanced Visualization</p>
+</div>
+""", unsafe_allow_html=True)
